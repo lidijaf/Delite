@@ -26,7 +26,7 @@ trait MultiLoop_SMP_Array_Generator {
   val master: OP_MultiLoop
   val chunkIdx: Int
   val numChunks: Int
-  val kernelPath: String
+  val graph: DeliteTaskGraph
 
   def makeChunk() {
     val src = makeKernel()
@@ -60,11 +60,11 @@ trait MultiLoop_SMP_Array_Generator {
   protected def writeKernelHeader()
   protected def writeKernelFooter()
   protected def returnResult(result: String)
+  protected def release(name: String, cond: Option[String] = None)
   protected def kernelName: String
   protected def addSource(source: String, name: String)
 
   //runtime services
-  protected def calculateRange(): (String, String)
   protected def get(syncObject: String, idx: Int): String
   protected def set(syncObject: String, idx: Int, value: String)
 
@@ -76,22 +76,22 @@ trait MultiLoop_SMP_Array_Generator {
   protected def postProcInit(acc: String)
   protected def postCombine(acc: String, neighbor: String)
   protected def finalize(acc: String)
-
+  protected def dynamicScheduler(outputSym: String): String
+  protected def dynamicCombine(acc: String)
+  protected def dynamicPostCombine(acc: String)
   protected def beginProfile()
   protected def endProfile()
 
   protected def writeKernel(op: OP_MultiLoop) {
     writeKernelHeader()
-
     // profiling
     if (Config.profile)
       beginProfile()
 
     //determine range of chunk
-    val (start,end) = calculateRange()
     val outSym = allocateOutput()
-
-    val acc = processRange(outSym,start,end)
+    
+    var acc = dynamicScheduler(outSym)
 
     def treeReduction(sync: String, needsCombine: Boolean) { //combines thread-local results and guarantees completion of all chunks by the time the master chunk returns
       var half = chunkIdx
@@ -102,27 +102,20 @@ trait MultiLoop_SMP_Array_Generator {
         step *= 2
 
         val neighborVal = get(sync, neighbor)
-        if (needsCombine) combine(acc, neighborVal) //combine activation records if needed
+        if (needsCombine) {
+          combine(acc, neighborVal) //combine activation records if needed
+          if (!op.needsPostProcess) release(neighborVal) //release rhs activation record
+        }
       }
       if (chunkIdx != 0) set(sync, chunkIdx, acc) //slave chunks store result
     }
 
     if (op.needsCombine) {
+      dynamicCombine(acc)
       treeReduction("A", true)
     }
-
     if (op.needsPostProcess) {
-      if (chunkIdx != 0) {
-        postCombine(acc, get("B", chunkIdx-1)) //linear chain combine
-      }
-      if (chunkIdx == numChunks-1) {
-        postProcInit(acc) //single-threaded
-      }
-
-      if (numChunks > 1) set("B", chunkIdx, acc) // kick off next in chain
-      if (chunkIdx != numChunks-1) get("B", numChunks-1) // wait for last one
-      postProcess(acc) //parallel again
-    
+      dynamicPostCombine(acc)
     }
 
     if (Config.profile)
@@ -131,14 +124,12 @@ trait MultiLoop_SMP_Array_Generator {
     if (op.needsPostProcess || !op.needsCombine) treeReduction("C", false) //barrier
     if (chunkIdx == 0) { //master chunk returns result
       finalize(acc)
+      release(outSym, Some(acc+"!="+outSym))
       returnResult(acc)
     }
-
     writeKernelFooter()
   }
-
 }
-
 
 trait MultiLoop_SMP_Array_Header_Generator {
 
@@ -151,6 +142,8 @@ trait MultiLoop_SMP_Array_Header_Generator {
   def makeHeader() = {
 
     writeHeader()
+    writeSynchronizedOffset()
+    dynamicWriteSync()
 
     if (op.needsCombine) { //tree-reduce: sync for all chunks except 0
       for (i <- 1 until numChunks)
@@ -183,5 +176,7 @@ trait MultiLoop_SMP_Array_Header_Generator {
   protected def kernelName: String
   protected def className: String
   protected def addSource(source: String, name: String)
+  protected def dynamicWriteSync()
+  protected def writeSynchronizedOffset()
 
 }

@@ -5,7 +5,7 @@ import _root_.scala.util.parsing.json.JSON
 import ops._
 import targets._
 import ppl.delite.runtime.Config
-import ppl.delite.runtime.Delite
+import ppl.delite.runtime.profiler.Profiler
 import ppl.delite.runtime.scheduler.PartialSchedule
 import collection.mutable.{HashSet, HashMap}
 
@@ -96,7 +96,7 @@ object DeliteTaskGraph {
   def getFieldMapOption(map: Map[Any, Any], field: String): Option[Map[Any, Any]] = {
     map.get(field) match {
       case Some(field) => field match {
-        case map: Map[Any, Any] => Some(map)
+        case map: Map[Any,Any] => Some(map)
         case err@_ => None
       }
       case None => None
@@ -148,7 +148,7 @@ object DeliteTaskGraph {
     }
 
     // TODO: maybe it would be better to add source info to DeliteOP?
-    Delite.sourceInfo += (id -> (fileName, line, opName))
+    Profiler.sourceInfo += (id -> (fileName, line, opName))
 	
     val newop = opType match {
       case "OP_Single" => new OP_Single(id, "kernel_"+id, resultMap)
@@ -157,11 +157,13 @@ object DeliteTaskGraph {
       case "OP_MultiLoop" =>
         val size = getFieldString(op, "sizeValue")
         val sizeIsConst = getFieldString(op, "sizeType") == "const"
+        val numDynamicChunks = getFieldString(op, "numDynamicChunksValue")
+        val numDynamicChunksIsConst = getFieldString(op, "numDynamicChunksType") == "const"
         if (resultMap(Targets.Scala).values.contains("Unit")) //FIXME: handle foreaches
           if (Config.clusterMode == 1) println("WARNING: ignoring stencil of op with Foreach: " + id)
         else
           processStencil(op)
-        new OP_MultiLoop(id, size, sizeIsConst, "kernel_"+id, resultMap, getFieldBoolean(op, "needsCombine"), getFieldBoolean(op, "needsPostProcess"))
+        new OP_MultiLoop(id, size, sizeIsConst, numDynamicChunks, numDynamicChunksIsConst, "kernel_"+id, resultMap, getFieldBoolean(op, "needsCombine"), getFieldBoolean(op, "needsPostProcess"))
       case "OP_Foreach" => new OP_Foreach(id, "kernel_"+id, resultMap)
       case other => error("OP Type not recognized: " + other)
     }
@@ -285,6 +287,7 @@ object DeliteTaskGraph {
     val newGraph = new DeliteTaskGraph
     newGraph._version = graph._version
     newGraph._kernelPath = graph._kernelPath
+    newGraph._appName = graph._appName
     newGraph._superGraph = graph
     newGraph
   }
@@ -431,8 +434,9 @@ object DeliteTaskGraph {
    */
   def processArgumentsTask(op: Map[Any, Any])(implicit graph: DeliteTaskGraph) {
     val id = getFieldString(op, "kernelId")
+    val argIdx = getFieldString(op, "index").toInt
     val argTypes = processReturnTypes(op, id)
-    val args = new Arguments(id, argTypes)
+    val args = new Arguments(id, argIdx, argTypes)
     args.supportedTargets ++= argTypes.keySet
     graph.registerOp(args)
     graph._result = (args, id)
@@ -500,6 +504,20 @@ object DeliteTaskGraph {
       //  case Targets.OpenCL => output.objFields = outList.tail.tail.tail.tail.head.asInstanceOf[Map[String,String]]
       //  case _ =>
       //}
+    }
+
+    //aux meta
+    val aux = getFieldMap(metadataMap, "aux").asInstanceOf[Map[Any,Any]]
+    if(aux.get("multiDim").isDefined) {
+      for (m <- getFieldList(aux,"multiDim").asInstanceOf[List[Map[Any,Any]]]) {
+        val level = getFieldString(m,"level").toInt
+        val dim = getFieldString(m,"dim")
+        val size = getFieldString(m,"size").toInt
+        val spanMap = getFieldMap(m,"span").asInstanceOf[Map[Any,Any]]
+        val spanTpe = getFieldString(spanMap,"tpe")
+        val spanSize = getFieldString(spanMap,"size")
+        metadata.mapping.append(Mapping(level,dim,size,spanTpe,spanSize))
+      }
     }
 
   }

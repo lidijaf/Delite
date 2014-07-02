@@ -6,18 +6,19 @@ import ppl.delite.runtime.codegen.{CppExecutableGenerator, CppCompile}
 import ppl.delite.runtime.graph.targets.Targets
 import collection.mutable.ArrayBuffer
 import ppl.delite.runtime.graph.DeliteTaskGraph
+import ppl.delite.runtime.Config
 
 object CppMultiLoopGenerator {
-  def makeChunks(op: OP_MultiLoop, numChunks: Int, kernelPath: String) = {
+  def makeChunks(op: OP_MultiLoop, numChunks: Int, graph: DeliteTaskGraph) = {
     for (idx <- 0 until numChunks) yield {
       val chunk = if (idx == 0) op else op.chunk(idx)
-      (new CppMultiLoopGenerator(chunk, op, idx, numChunks, kernelPath)).makeChunk()
+      (new CppMultiLoopGenerator(chunk, op, idx, numChunks, graph)).makeChunk()
       chunk
     }
   }
 }
 
-class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val chunkIdx: Int, val numChunks: Int, val kernelPath: String) extends MultiLoop_SMP_Array_Generator {
+class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val chunkIdx: Int, val numChunks: Int, val graph: DeliteTaskGraph) extends MultiLoop_SMP_Array_Generator {
 
   protected val headerObject = "head"
   protected val closure = "head->closure"
@@ -26,6 +27,7 @@ class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val 
 
   protected def writeHeader() {
     out.append("#include \""+CppMultiLoopHeaderGenerator.className(master) + ".cpp\"\n")
+    out.append("#include \"DeliteCppProfiler.h\"\n")
     CppMultiLoopHeaderGenerator.headerList += kernelSignature + ";\n"
   }
 
@@ -49,14 +51,45 @@ class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val 
     out.append("return "+result+";\n")
   }
 
-  protected def calculateRange(): (String,String) = {
-    out.append("int startOffset = "+closure+"->loopStart;\n")
-    out.append("int size = "+closure+"->loopSize;\n")
-    out.append("int start = startOffset + size*"+chunkIdx+"/"+numChunks+";\n")
-    out.append("int end = startOffset + size*"+(chunkIdx+1)+"/"+numChunks+";\n")
-    ("start","end")
+  protected def release(name: String, cond: Option[String] = None) {
+    if (Config.cppMemMgr == "refcnt") {
+      cond match {
+        case Some(c) => out.append("if(" + c + ") delete " + name + ";\n")
+        case None => out.append("delete " + name + ";\n")
+      }
+    }
   }
 
+  protected def dynamicScheduler(outputSym: String) : String = {
+    //used to be calculate range
+    out.append("int64_t startOffset = "+closure+"->loopStart;\n")
+    out.append("int64_t size = "+closure+"->loopSize;\n")
+    out.append("int64_t start = startOffset + size*"+chunkIdx+"/"+numChunks+";\n")
+    out.append("int64_t end = startOffset + size*"+(chunkIdx+1)+"/"+numChunks+";\n")
+    processRange(outputSym,"start","end")
+    "acc"
+  }
+
+  protected def dynamicCombine(acc: String) = {
+    out.append("")
+  }
+  
+  protected def dynamicPostCombine(acc: String) = {
+    if (chunkIdx != 0) {
+      postCombine(acc, get("B", chunkIdx-1)) //linear chain combine
+    }
+    if (chunkIdx == numChunks-1) {
+      postProcInit(acc) //single-threaded
+    }
+
+    if (numChunks > 1) set("B", chunkIdx, acc) // kick off next in chain
+    if (chunkIdx != numChunks-1) get("B", numChunks-1) // wait for last one
+    postProcess(acc) //parallel again
+
+    // release activation records except the master chunk
+    if (chunkIdx != 0) release(acc)
+  }
+  
   protected def allocateOutput(): String = {
     out.append(master.outputType(Targets.Cpp)+"* out = "+headerObject+"->out;\n")
     "out"
@@ -96,10 +129,15 @@ class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val 
     "neighbor"+syncObject+idx
   }
 
-  //TODO: add profiling for c++ kernels
-  protected def beginProfile() { }
+  protected def beginProfile() {
+    val chunkName = master.id + "_" + chunkIdx
+    out.append("DeliteCppTimerStart(" + chunkIdx + ",\""+chunkName+"\");\n")
+  }
 
-  protected def endProfile() {  }
+  protected def endProfile() {
+    val chunkName = master.id + "_" + chunkIdx
+    out.append("DeliteCppTimerStop(" + chunkIdx + ",\""+chunkName+"\");\n")
+  }
 
   protected def kernelName = {
     "MultiLoop_" + master.id + "_Chunk_" + chunkIdx
@@ -124,6 +162,7 @@ class CppMultiLoopHeaderGenerator(val op: OP_MultiLoop, val numChunks: Int, val 
 
   protected def writeFooter() {
     initSync()
+    writeDestructor()
     out.append("};\n")
     out.append("#endif\n")
 
@@ -145,9 +184,13 @@ class CppMultiLoopHeaderGenerator(val op: OP_MultiLoop, val numChunks: Int, val 
     out.append("public: \n")
   }
 
+  def addRef(name: String) = {
+    if (isPrimitiveType(op.inputType(name)) || Config.cppMemMgr=="refcnt") " "
+    else " * "
+  }
+
   protected def kernelSignature = {
-    def ref(name: String) = if(!isPrimitiveType(op.inputType(name))) "* " else " "
-    className + "* " + kernelName + op.getInputs.map(in => op.inputType(Targets.Cpp, in._2) + ref(in._2) + in._2).mkString("(", ", ", ")")
+    className + "* " + kernelName + op.getInputs.map(in => op.inputType(Targets.Cpp, in._2) + addRef(in._2) + in._2).mkString("(", ", ", ")")
   }
 
   protected def writeKernelFunction(stream: StringBuilder) {
@@ -172,7 +215,7 @@ class CppMultiLoopHeaderGenerator(val op: OP_MultiLoop, val numChunks: Int, val 
       if (!first) out.append(", ")
       first = false
       out.append(op.inputType(Targets.Cpp, name))
-      if (!isPrimitiveType(op.inputType(name))) out.append("*")
+      out.append(addRef(name))
       out.append(" in")
       out.append(inIdx)
       inIdx += 1
@@ -199,6 +242,10 @@ class CppMultiLoopHeaderGenerator(val op: OP_MultiLoop, val numChunks: Int, val 
 
   protected val syncList = new ArrayBuffer[String]
 
+  //TODO: fill in
+  protected def writeSynchronizedOffset(){
+    out.append("")
+  }
   protected def writeSync(key: String) {
     syncList += key //need a way to initialize these fields in C++
     val outputType = op.outputType(Targets.Cpp)
@@ -226,7 +273,9 @@ class CppMultiLoopHeaderGenerator(val op: OP_MultiLoop, val numChunks: Int, val 
     out.append("pthread_mutex_unlock(&lock"+key+");\n")
     out.append("}\n")
   }
-
+  protected def dynamicWriteSync() {
+    out.append("")
+  }
   protected def initSync() {
     out.append("void initSync() {\n")
     for (key <- syncList) {
@@ -234,6 +283,13 @@ class CppMultiLoopHeaderGenerator(val op: OP_MultiLoop, val numChunks: Int, val 
       out.append("pthread_cond_init(&cond"+key+", NULL);\n")
       out.append("notReady"+key+ " = true;\n")
     }
+    out.append("}\n")
+  }
+
+  protected def writeDestructor() {
+    out.append("~" + className + "() {\n")
+    out.append("delete closure;\n")
+    out.append("//out will be released by the caller\n")
     out.append("}\n")
   }
 

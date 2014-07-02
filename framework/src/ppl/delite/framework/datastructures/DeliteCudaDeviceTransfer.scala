@@ -10,14 +10,14 @@ trait DeliteCudaDeviceTransfer extends CudaDeviceTransfer {
   val IR: Expressions
   import IR._
 
-  override def emitSendSlave(tp: Manifest[Any]): (String,String) = {
+  override def emitSendSlave(tp: Manifest[_]): (String,String) = {
     if (tp.erasure == classOf[Variable[AnyVal]]) {
       val out = new StringBuilder
       val typeArg = tp.typeArguments.head
       if (!isPrimitiveType(typeArg)) throw new GenerationFailedException("emitSend Failed") //TODO: Enable non-primitie type refs
-      val signature = "%sRef< %s > *sendCuda_%s(%sRef< %s > *sym)".format(deviceTarget,remap(typeArg),mangledName(deviceTarget+"Ref<"+remap(tp)+">"),hostTarget,remap(typeArg))
+      val signature = "%sRef%s *sendCuda_%s(%sRef%s *sym)".format(deviceTarget,remap(typeArg),mangledName(deviceTarget+"Ref"+remap(tp)),hostTarget,remap(typeArg))
       out.append(signature + " {\n")
-      out.append("\t%sRef< %s > *sym_dev = new %sRef< %s >(sym->get());\n".format(deviceTarget,remap(typeArg),deviceTarget,remap(typeArg)))
+      out.append("\t%sRef%s *sym_dev = new %sRef%s(sym->get());\n".format(deviceTarget,remap(typeArg),deviceTarget,remap(typeArg)))
       out.append("\treturn sym_dev;\n")
       out.append("}\n")
       (signature+";\n", out.toString)
@@ -91,12 +91,12 @@ trait DeliteCudaDeviceTransfer extends CudaDeviceTransfer {
     }
   }
 
-  override def emitRecvSlave(tp: Manifest[Any]): (String,String) = {
+  override def emitRecvSlave(tp: Manifest[_]): (String,String) = {
     if (tp.erasure == classOf[Variable[AnyVal]]) {
       val out = new StringBuilder
       val typeArg = tp.typeArguments.head
       if (!isPrimitiveType(typeArg)) throw new GenerationFailedException("emitSend Failed") //TODO: Enable non-primitie type refs
-      val signature = "%sRef< %s > *recvCuda_%s(%sRef< %s > *sym_dev)".format(hostTarget,remapHost(typeArg),mangledName(deviceTarget+"Ref<"+remap(tp)+">"),deviceTarget,remap(typeArg))
+      val signature = "%sRef%s *recvCuda_%s(%sRef%s *sym_dev)".format(hostTarget,remapHost(typeArg),mangledName(deviceTarget+"Ref"+remap(tp)),deviceTarget,remap(typeArg))
       out.append(signature + " {\n")
       out.append("assert(false);\n")
       out.append("}\n")
@@ -157,12 +157,12 @@ trait DeliteCudaDeviceTransfer extends CudaDeviceTransfer {
   }
   */
 
-  override def emitSendUpdateSlave(tp: Manifest[Any]): (String,String) = {
+  override def emitSendUpdateSlave(tp: Manifest[_]): (String,String) = {
     if (tp.erasure == classOf[Variable[AnyVal]]) {
       val out = new StringBuilder
       val typeArg = tp.typeArguments.head
       if (!isPrimitiveType(typeArg)) throw new GenerationFailedException("emitSend Failed") //TODO: Enable non-primitie type refs
-      val signature = "void sendUpdateCuda_%s(%sRef< %s > *sym_dev, %sRef< %s > *sym)".format(mangledName(deviceTarget+"Ref<"+remap(tp)+">"),deviceTarget,remap(typeArg),hostTarget,remap(typeArg))
+      val signature = "void sendUpdateCuda_%s(%sRef%s *sym_dev, %sRef%s *sym)".format(mangledName(deviceTarget+"Ref"+remap(tp)),deviceTarget,remap(typeArg),hostTarget,remap(typeArg))
       out.append(signature + " {\n")
       out.append("sym_dev->data = sym->data;\n")
       out.append("}\n")
@@ -201,12 +201,12 @@ trait DeliteCudaDeviceTransfer extends CudaDeviceTransfer {
     }
   }
 
-  override def emitRecvUpdateSlave(tp: Manifest[Any]): (String,String) = {
+  override def emitRecvUpdateSlave(tp: Manifest[_]): (String,String) = {
     if (tp.erasure == classOf[Variable[AnyVal]]) {
       val out = new StringBuilder
       val typeArg = tp.typeArguments.head
       if (!isPrimitiveType(typeArg)) throw new GenerationFailedException("emitSend Failed") //TODO: Enable non-primitie type refs
-      val signature = "void recvUpdateCuda_%s(%sRef< %s > *sym_dev, %sRef< %s > *sym)".format(mangledName(deviceTarget+"Ref<"+remap(tp)+">"),deviceTarget,remap(typeArg),hostTarget,remap(typeArg))
+      val signature = "void recvUpdateCuda_%s(%sRef%s *sym_dev, %sRef%s *sym)".format(mangledName(deviceTarget+"Ref"+remap(tp)),deviceTarget,remap(typeArg),hostTarget,remap(typeArg))
       out.append(signature + " {\n")
       out.append("assert(false);\n")
       out.append("}\n")

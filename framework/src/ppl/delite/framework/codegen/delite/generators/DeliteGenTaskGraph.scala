@@ -13,7 +13,7 @@ import ppl.delite.framework.ops._
 import ppl.delite.framework.Config
 import ppl.delite.framework.transform.LoopSoAOpt
 import ppl.delite.framework.datastructures.DeliteArray
-import ppl.delite.framework.analysis.{LoopAnalysis,StencilAnalysis}
+import ppl.delite.framework.analysis.{NestedLoopMappingAnalysis,StencilAnalysis}
 import ppl.delite.framework.datastructures.DeliteArrayFatExp
 
 trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOpt {
@@ -125,18 +125,22 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
     gatherStencil(sym,rhs)
     allStencils = /*allStencils ++*/ stencilAnalysis.getLoopStencils
 
+    // Run GPU multi-dim mapping analysis
+    if(Config.enableGPUMultiDim) {
+      val loopAnalysis = new NestedLoopMappingAnalysis { val IR: DeliteGenTaskGraph.this.IR.type = DeliteGenTaskGraph.this.IR }
+      loopAnalysis.innerScope = this.innerScope
 
-    //compute result types for all targets independently of whether or not the kernel itself could be generated
-    val resultGens = (for (gen <- generators) yield {
-      try { 
-        val tpe = for (s <- sym) yield gen.remap(s.tp) //could throw exception, all or nothing
-        Some(gen)
+      val runAnalysis = rhs match {
+        case SimpleFatLoop(_,_,_) | SimpleLoop(_,_,_) => true
+        case _: AbstractLoop[_] => true
+        case Reflect(_:AbstractLoop[_],u,es) => true
+        case _ => false
       }
-      catch {
-        case e:GenerationFailedException => None
-        case e:Exception => throw(e)
+      if (runAnalysis) {
+        loopAnalysis.start(sym, rhs, deliteInputs)
+        loopAnalysis.printResult(sym)
       }
-    }).filter(_.isDefined).map(_.get)
+    }
 
     val hasOutputSlotTypes = rhs match {
       case op: AbstractLoop[_] => true
@@ -144,23 +148,34 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
       case _ => false
     }
 
-    class JsonPair(_1: String, _2: String) extends Pair[String,String](_1,_2) {
+    class JsonPair(_1: String, _2: String) extends Pair(_1,_2) {
       override def toString = "\"" + _1 + "\" : \"" + _2 + "\""
     }
 
-    for (gen <- resultGens) {
-      val tpeStr = for (s <- sym) yield {
-        val tpeStr = gen match {
-          case g:ScalaCodegen if resultIsVar => "generated.scala.Ref[" + g.remap(s.tp) + "]"
-          case g:CLikeCodegen if resultIsVar => g.deviceTarget.toString + "Ref< " + g.remap(s.tp) + g.addRef(g.remap(s.tp)) + " >"
-          case g => g.remap(s.tp)
+    //compute result types for all syms for all targets independently of whether or not the kernel itself could be generated
+    for (gen <- generators) {
+      var genReturnType: String = null
+      val tpes = for (s <- sym) {
+        try {
+          val tpeStr = gen match {
+            case g:ScalaCodegen if resultIsVar => "generated.scala.Ref[" + g.remap(s.tp) + "]"
+            case g:CLikeCodegen if resultIsVar && cppMemMgr == "recnt" => g.wrapSharedPtr(g.deviceTarget.toString + "Ref" + g.unwrapSharedPtr(g.remap(sym.head.tp)))
+            case g:CLikeCodegen if resultIsVar => g.deviceTarget.toString + "Ref" + g.remap(sym.head.tp)
+            case g => g.remap(s.tp)
+          }
+          genReturnType = tpeStr
+          outputSlotTypes.getOrElseUpdate(quote(s), new ListBuffer) += new JsonPair(gen.toString, tpeStr)
         }
-        outputSlotTypes.getOrElseUpdate(quote(s), new ListBuffer) += new JsonPair(gen.toString, tpeStr)
-        tpeStr
+        catch {
+          case e:GenerationFailedException => //
+          case e:Exception => throw(e)
+        }
       }
 
-      val retStr = if (hasOutputSlotTypes) "activation_" + kernelName else tpeStr.head
-      returnTypes += new JsonPair(gen.toString, retStr)
+      if (genReturnType != null) {
+        val retStr = if (hasOutputSlotTypes) "activation_" + kernelName else genReturnType
+        returnTypes += new JsonPair(gen.toString, retStr)
+      }
     }
 
     if (!skipEmission) for (gen <- generators) {
@@ -268,8 +283,8 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
 
         //add MetaData
         if (gen.hasMetaData) {
-          metadata += new Pair[String,String](gen.toString, gen.getMetaData) {
-            override def toString = "\"" + _1 + "\" : " + _2
+          metadata += new Pair(gen.toString, gen.getMetaData) {
+            override def toString = "\"" + _1 + "\" : " + _2 //note slightly different than standard JsonPair
           }
         }
 
@@ -367,7 +382,11 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
 
     // result is a single stencil representing all the info we have for this op's inputs
     val opStencil = if (sym == Nil) new Stencil() else sym.map(i => allStencils.getOrElse(i, new Stencil())).reduce((a,b) => a ++ b)
-
+    
+    def loopBodyAverageDynamicChunks[A](e: List[Def[A]]) = {
+      e.map(i => loopBodyNumDynamicChunks(i)).reduce((a,b) => a + b)/e.length
+    }
+    
     // emit task graph node
     rhs match {
       case op: AbstractFatLoop =>
@@ -376,18 +395,19 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
         // Predef.println("stencil is: " + opStencil)
         // val arrayInputs = inputs.flatMap(getArrayInputs)
         // Predef.println("  array inputs are: ")
-        // Predef.println(arrayInputs)
-        emitMultiLoop(kernelName, outputs, resultIsVar, inputs, inVars, inMutating, inControlDeps, antiDeps, op.size, op.body.exists (loopBodyNeedsCombine _), op.body.exists (loopBodyNeedsPostProcess _), optContext, opStencil)
+        // Predef.println(arrayInputs)val i = (a match {
+        emitMultiLoop(kernelName, outputs, resultIsVar, inputs, inVars, inMutating, inControlDeps, antiDeps, op.size, loopBodyAverageDynamicChunks(op.body), op.body.exists (loopBodyNeedsCombine _), op.body.exists (loopBodyNeedsPostProcess _), optContext, opStencil)
       case op: AbstractFatIfThenElse =>
         assert(sym.length == 1, "TODO: implement fat if then else")
         emitIfThenElse(Block(op.cond), op.thenp.head, op.elsep.head, kernelName, outputs, resultIsVar, inputs, inMutating, inControlDeps, antiDeps, optContext)
       case z =>
         z match {
+          //case op:DeliteOpLoop[_] =>
           case op:AbstractLoop[_] =>
             // Predef.println("emitting DeliteLoop (" + sym + "), inputs are: ")
             // Predef.println(inputs)
             // Predef.println("stencil is: " + opStencil)
-            emitMultiLoop(kernelName, outputs, resultIsVar, inputs, inVars, inMutating, inControlDeps, antiDeps, op.size, loopBodyNeedsCombine(op.body), loopBodyNeedsPostProcess(op.body), optContext, opStencil)
+            emitMultiLoop(kernelName, outputs, resultIsVar, inputs, inVars, inMutating, inControlDeps, antiDeps, op.size,  loopBodyNumDynamicChunks(op.body), loopBodyNeedsCombine(op.body), loopBodyNeedsPostProcess(op.body), optContext, opStencil)
           case e:DeliteOpExternal[_] => emitExternal(kernelName, outputs, resultIsVar, inputs, inVars, inMutating, inControlDeps, antiDeps)
           case c:DeliteOpCondition[_] => emitIfThenElse(Block(c.cond), c.thenp, c.elsep, kernelName, outputs, resultIsVar, inputs, inMutating, inControlDeps, antiDeps, optContext)
           case w:DeliteOpWhileLoop => emitWhileLoop(w.cond, w.body, kernelName, outputs, resultIsVar, inputs, inMutating, inControlDeps, antiDeps, optContext)
@@ -404,7 +424,7 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
   }
 
   /**
-   * DEG quotes - handles certain oddities between quoting constants in code vs. in the DEG 
+   * DEG quotes - handles descrepancies between quoting constants in code vs. in the DEG 
    */
   override def quote(x: Exp[Any]) = x match {
     case Const(s: String) => super.quote(x).replaceAllLiterally("\"","\\\"") //escape constant quoted strings
@@ -419,13 +439,15 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
    * @param antiDeps    a list of WAR dependencies (need to be committed in program order)
    */
 
-  def emitMultiLoop(id: String, outputs: List[Exp[Any]], resultIsVar: Boolean, inputs: List[Exp[Any]], inVars: List[Exp[Any]], mutableInputs: List[Exp[Any]], controlDeps: List[Exp[Any]], antiDeps: List[Exp[Any]], size: Exp[Long], needsCombine: Boolean, needsPostProcess: Boolean,
+  def emitMultiLoop(id: String, outputs: List[Exp[Any]], resultIsVar: Boolean, inputs: List[Exp[Any]], inVars: List[Exp[Any]], mutableInputs: List[Exp[Any]], controlDeps: List[Exp[Any]], antiDeps: List[Exp[Any]], size: Exp[Long], numDynamicChunks: Int, needsCombine: Boolean, needsPostProcess: Boolean,
                     sourceContext: Option[SourceContext], stencil: Stencil)
        (implicit supportedTgt: ListBuffer[String], returnTypes: ListBuffer[Pair[String, String]], outputSlotTypes: HashMap[String, ListBuffer[(String, String)]], metadata: ArrayBuffer[Pair[String,String]]) = {
    stream.println("{\"type\":\"MultiLoop\",")
    emitSourceContext(sourceContext, stream, id)
    stream.println(",\n")
    emitConstOrSym(size, "size")
+   stream.println(",\n")
+   emitConstOrSym(Const[Int](numDynamicChunks), "numDynamicChunks")
    stream.print(",\"needsCombine\":" + needsCombine)
    stream.println(",\"needsPostProcess\":" + needsPostProcess)
    emitStencil(inputs, stencil)
@@ -557,16 +579,23 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
   def emitSubGraph(prefix: String, e: Block[Any]) = e match {
     case Block(c:Const[Any]) => stream.println("  \"" + prefix + "Type\": \"const\",")
                                 stream.println("  \"" + prefix + "Value\": \"" + quote(c) + "\",")
-    case Block(s:Sym[Any]) =>  stream.println("  \"" + prefix + "Type\": \"symbol\",")
-                        stream.println("  \"" + prefix + "Ops\": [")
-                        val saveMutatingDeps = kernelMutatingDeps
-                        val saveInputDeps = kernelInputDeps
-                        kernelMutatingDeps = Map()
-                        kernelInputDeps = Map()
-                        emitBlock(e)
-                        emitEOG()
-                        kernelInputDeps = saveInputDeps
-                        kernelMutatingDeps = saveMutatingDeps
+    case Block(s:Sym[Any]) =>   getBlockResult(e) match {
+                                  // if we have a non-unit constant return value, we need to be able to parse it directly
+                                  case c: Const[Any] if c.tp != manifest[Unit] =>
+                                    stream.println("  \"" + prefix + "Type\": \"const\",")
+                                    stream.println("  \"" + prefix + "Value\": \"" + quote(c) + "\",")
+                                  case _ => 
+                                    stream.println("  \"" + prefix + "Type\": \"symbol\",")
+                                }
+                                stream.println("  \"" + prefix + "Ops\": [")
+                                val saveMutatingDeps = kernelMutatingDeps
+                                val saveInputDeps = kernelInputDeps
+                                kernelMutatingDeps = Map()
+                                kernelInputDeps = Map()
+                                emitBlock(e)
+                                emitEOG()
+                                kernelInputDeps = saveInputDeps
+                                kernelMutatingDeps = saveMutatingDeps
   }
 
   private def makeString(list: List[Exp[Any]]) = {
@@ -584,7 +613,7 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
     }).filter(_.isDefined).map(_.get)
   }
 
-  override def emitBlockHeader(syms: List[Sym[Any]], appName: String) {
+  override def emitBlockHeader(args: List[Sym[Any]], appName: String) {
     stream.println("{\"DEG\":{\n"+
                    "\"version\" : 0.1,\n"+
                    "\"name\" : \"" + appName + "\",\n"+
@@ -592,10 +621,34 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
                    "\"targets\": [" + generators.map("\""+_+"\"").mkString(",")  + "],\n"+
                    "\"ops\": [")
 
-    assert(syms.length == 1) //only one input arg is currently supported
-    stream.println("{\"type\" : \"Arguments\" , \"kernelId\" : \"" + quote(syms.head) + "\",")
-    stream.println("  \"return-types\":{" + getOutputTypes(syms.head).mkString(",") + "}")
-    stream.println("},")
+    // CLikeCodegen types need to know all the types used in the program including args
+    // because even array types are generated by the compiler rather using template.
+    def nestedManifests(m: Manifest[_]): List[Manifest[_]] = {
+      if (m.typeArguments.isEmpty) List(m)
+      else (List(m) ++ m.typeArguments.flatMap(nestedManifests)).distinct
+    }
+    for (arg <- args) {
+      for (gen <- generators) {
+        gen match {
+          case g: CLikeCodegen => nestedManifests(arg.tp) foreach { m =>
+            try {
+              g.dsTypesList.add((m,g.remap(m)))
+            }
+            catch {
+              case e: GenerationFailedException => None
+              case e: Exception => throw(e)
+            }
+          }
+          case _ => //
+        }
+      }
+    }
+
+    for (i <- 0 until args.length) {
+      stream.println("{\"type\" : \"Arguments\", \"kernelId\" : \"" + quote(args(i)) + "\", \"index\" : \"" + i + "\",")
+      stream.println("  \"return-types\":{" + getOutputTypes(args(i)).mkString(",") + "}")
+      stream.println("},")
+    }
   }
 
   override def emitBlockFooter(result: Exp[Any]) {

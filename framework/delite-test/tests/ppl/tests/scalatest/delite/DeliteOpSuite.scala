@@ -123,6 +123,21 @@ trait DeliteReduce extends DeliteTestBase {
   }
 }
 
+// TODO: Current GPU reduce only works for commutative reduce operators.
+// Enable this test when this gets fixed.
+object DeliteReduce2Runner extends DeliteTestRunner with DeliteTestDSLApplicationRunner with DeliteReduce2
+trait DeliteReduce2 extends DeliteTestBase {
+  def main() = {
+
+    val v = DeliteArrayBuffer.fromFunction(10){ i => i+5 }
+    val s = v.reduce{ (a,b) => b }(0)
+    collect(s == 14)
+
+    mkReport
+  }
+}
+
+
 object DeliteMapReduceRunner extends DeliteTestRunner with DeliteTestDSLApplicationRunner with DeliteMapReduce
 trait DeliteMapReduce extends DeliteTestBase {
   def main() = {
@@ -145,10 +160,9 @@ object DeliteFilterRunner extends DeliteTestRunner with DeliteTestDSLApplication
 trait DeliteFilter extends DeliteTestBase {
   def main() = {
 
-    //TODO: doesn't work in CUDA codegen
-    // val a1 = DeliteArray.fromFunction(50){ i => i }
-    // val a2 = a1.filter(_ % 2 == 1)
-    // collectArray(a2, 25, i => a1(1+i*2))
+    val a1 = DeliteArray.fromFunction(50){ i => i }
+    val a2 = a1.filter(_ % 2 == 1)
+    collectArray(a2, 25, i => a1(1+i*2))
 
     val v1 = DeliteArrayBuffer.fromFunction(100){ i => i }
     val v2 = v1.filter(_ % 2 == 1)
@@ -197,9 +211,9 @@ trait DeliteZipWithReduceTuple extends DeliteTestBase {
     val v = DeliteArrayBuffer.fromFunction(10){ i => i+5 }
     val i = DeliteArrayBuffer.fromFunction(10){ i => i+1 }
 
-    val s = v.zip(i){ (a,b) => (a,b) }.reduce{ (a,b) => (b._1, b._2) }(make_tuple2((0,0)))
-    collect(s._1 == 14)
-    collect(s._2 == 10)
+    val s = v.zip(i){ (a,b) => (a,b) }.reduce{ (a,b) => (a._1+b._1, a._2+b._2) }(make_tuple2((0,0)))
+    collect(s._1 == 95)
+    collect(s._2 == 55)
 
     //val maxWithIndex = v.zip(i){ (a,b) => (a,b) }.reduce{ (a,b) => if (a._1 < b._1) a else b }(unit(null)) //rFunc isn't separable
 
@@ -385,6 +399,17 @@ trait DeliteIfThenElse extends DeliteTestBase {
       collect(false)
     }
 
+    // check a conditional with an effect in a branch that returns a constant (previously caused a DEG parse error)
+    val z = 
+      if (p > 1) {
+        13
+      }
+      else {
+        println("cond_check")
+        3
+      }
+    collect(z == 3)
+
     mkReport
   }
 }
@@ -460,6 +485,7 @@ class DeliteOpSuite extends DeliteSuite {
   def testDeliteFlatMap() { compileAndTest(DeliteFlatMapRunner) }
   def testDeliteZip() { compileAndTest(DeliteZipRunner, CHECK_MULTILOOP) }
   def testDeliteReduce() { compileAndTest(DeliteReduceRunner, CHECK_MULTILOOP) }
+  //def testDeliteReduce2() { compileAndTest(DeliteReduce2Runner, CHECK_MULTILOOP) }
   def testDeliteMapReduce() { compileAndTest(DeliteMapReduceRunner, CHECK_MULTILOOP) }
   def testDeliteFilter() { compileAndTest(DeliteFilterRunner, CHECK_MULTILOOP) }
   def testDeliteForeach() { compileAndTest(DeliteForeachRunner) }

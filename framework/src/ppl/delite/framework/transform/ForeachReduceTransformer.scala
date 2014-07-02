@@ -35,7 +35,8 @@ trait ForeachReduceTransformExp extends DeliteTransform
       zero = this.zero,
       rV = this.rV,
       rFunc = reifyEffects(rFunc(this.rV._1, this.rV._2)),  
-      stripFirst = false
+      stripFirst = false,
+      numDynamicChunks = this.numDynamicChunks
     ))            
     
     val mR = manifest[R]
@@ -166,6 +167,7 @@ trait ForeachReduceTransformer extends ForwardPassTransformer {
        
   override def transformStm(stm: Stm): Exp[Any] = stm match {
     case TP(s,Reflect(l:DeliteOpForeachReduce[_], u, es)) => 
+      implicit def ctx: SourceContext = if (s.pos.length > 0) s.pos(0) else null
       // transformForeachReduceToLoops(s,l)
       reflectTransformed(this.asInstanceOf[IR.Transformer], transformForeachReduceToLoops(s,l), u, es) // cast needed why?      
     case _ => super.transformStm(stm)

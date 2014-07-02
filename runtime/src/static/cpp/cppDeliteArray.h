@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
 template <class T>
 class cppDeliteArray {
 public:
@@ -44,8 +45,11 @@ public:
     }
     
     // Additional functions
-    void copy(size_t srcOffset, cppDeliteArray<T> *dest, size_t destOffset, size_t length) {
-      memmove(dest->data + destOffset, data + srcOffset, sizeof(T) * length);
+    void copy(int srcOffset, cppDeliteArray<T> *dest, int destOffset, int length) {
+      if ((data==dest->data) && (srcOffset<destOffset))
+        std::copy_backward(data+srcOffset, data+srcOffset+length, dest->data+destOffset+length);
+      else
+        std::copy(data+srcOffset, data+srcOffset+length, dest->data+destOffset);
     }
 
     cppDeliteArray<T> *arrayunion(cppDeliteArray<T> *rhs) {
@@ -95,5 +99,5 @@ public:
 
     void release(void);
 };
-
+*/
 #endif

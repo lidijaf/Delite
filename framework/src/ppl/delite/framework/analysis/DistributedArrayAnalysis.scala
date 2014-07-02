@@ -4,7 +4,7 @@ import scala.virtualization.lms.internal.FatBlockTraversal
 import ppl.delite.framework.ops.{DeliteOpsExp, DeliteFileReaderOpsExp, DeliteCollection}
 import ppl.delite.framework.datastructures.{DeliteArrayOpsExp, DeliteStructsExp}
 
-trait DistributedArrayAnalysis extends FatBlockTraversal {
+/*trait DistributedArrayAnalysis extends FatBlockTraversal {
   val IR: DeliteOpsExp with DeliteArrayOpsExp with DeliteStructsExp with DeliteFileReaderOpsExp
   import IR._
 
@@ -79,4 +79,4 @@ trait DistributedArrayAnalysis extends FatBlockTraversal {
     case _ => None
   }
 
-}
+}*/

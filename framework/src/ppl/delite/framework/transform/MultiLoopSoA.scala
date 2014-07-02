@@ -37,7 +37,9 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
   }
 
   def transformLoop(stm: Stm): Option[Exp[Any]] = stm match {
-    case TP(sym, Loop(size, v, body: DeliteCollectElem[a,i,ca])) => soaCollect[a,i,ca](size,v,body)(body.mA,body.mI,body.mCA) match {
+      case TP(sym, Loop(size, v, body: DeliteCollectElem[a,i,ca])) => 
+        val pos: SourceContext = if (sym.pos.length > 0) sym.pos(0) else null
+        soaCollect[a,i,ca](size,v,body)(body.mA,body.mI,body.mCA,pos) match {
       case s@Some(newSym) => stm match {
         case TP(sym, z:DeliteOpZipWith[_,_,_,_]) if(Config.enableGPUObjReduce) => //TODO: remove this
           encounteredZipWith += newSym -> z
@@ -64,7 +66,7 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
   }
 
   //collect elems: unwrap outer struct if return type is a Struct && perform SoA transform if element type is a Struct
-  def soaCollect[A:Manifest, I<:DeliteCollection[A]:Manifest, CA<:DeliteCollection[A]:Manifest](size: Exp[Long], v: Sym[Long], body: DeliteCollectElem[A,I,CA]): Option[Exp[CA]] = {
+  def soaCollect[A:Manifest, I<:DeliteCollection[A]:Manifest, CA<:DeliteCollection[A]:Manifest](size: Exp[Long], v: Sym[Long], body: DeliteCollectElem[A,I,CA])(implicit pos: SourceContext): Option[Exp[CA]] = {
     val alloc = t(body.buf.alloc)
     alloc match {
     case StructBlock(tag,elems) =>
@@ -100,7 +102,8 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
               allocRaw = reifyEffects(dc_alloc[B,DeliteArray[B]](allocV,sizeV)),
               copyRaw = reifyEffects(dc_copy(buf_aV,buf_iV,allocV,buf_iV2,sizeV)),
               finalizer = reifyEffects(allocV)
-            )
+            ),
+            numDynamicChunks = body.numDynamicChunks
           ))
       }
 
@@ -192,7 +195,8 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
           accInit = reifyEffects(fatal(unit("accInit not transformed")))(manifest[B]), //unwrap this as well to support mutable reduce
           rV = (rv1.asInstanceOf[Sym[B]], rv2.asInstanceOf[Sym[B]]),
           rFunc = r,
-          stripFirst = !isPrimitiveType(manifest[B])
+          stripFirst = !isPrimitiveType(manifest[B]),
+          numDynamicChunks = body.numDynamicChunks
         ))
       }
 
@@ -284,7 +288,8 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
             allocRaw = unusedBlock,
             copyRaw = unusedBlock,
             finalizer = reifyEffects(allocV)
-          )
+          ),
+          numDynamicChunks = body.numDynamicChunks
         ))
       }
 

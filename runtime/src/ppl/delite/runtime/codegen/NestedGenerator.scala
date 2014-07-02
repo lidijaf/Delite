@@ -1,7 +1,9 @@
 package ppl.delite.runtime.codegen
 
+import ppl.delite.runtime.graph.DeliteTaskGraph
 import collection.mutable.ArrayBuffer
 import java.lang.annotation.Target
+import ppl.delite.runtime.Config
 import ppl.delite.runtime.graph.ops._
 import ppl.delite.runtime.graph.targets.Targets
 import sync._
@@ -40,9 +42,10 @@ trait NestedGenerator extends ExecutableGenerator {
 trait ScalaNestedGenerator extends NestedGenerator with ScalaExecutableGenerator {
 
   override protected def writeHeader() {
+    ScalaExecutableGenerator.writePackage(graph, out)
     out.append("import ppl.delite.runtime.profiler.PerformanceTimer\n")
     out.append("import ppl.delite.runtime.profiler.MemoryProfiler\n")
-    ScalaExecutableGenerator.writePath(kernelPath, out) //package of scala kernels
+    ScalaExecutableGenerator.writePath(graph, out) //package of scala kernels
 
     val locationsRecv = nested.nestedGraphs.flatMap(_.schedule(location).toArray.filter(_.isInstanceOf[Receive])).map(_.asInstanceOf[Receive].sender.from.scheduledResource).toSet
     val locations = if (nested.nestedGraphs.flatMap(_.schedule(location).toArray.filter(_.isInstanceOf[Send])).nonEmpty) Set(location) union locationsRecv
@@ -52,6 +55,7 @@ trait ScalaNestedGenerator extends NestedGenerator with ScalaExecutableGenerator
     out.append("object ")
     out.append(executableName)
     out.append(" {\n")
+    if (Config.profile) out.append("val threadName = Thread.currentThread.getName()\n")
   }
 
   override protected def writeMethodHeader() {
@@ -100,7 +104,7 @@ trait CppNestedGenerator extends NestedGenerator with CppExecutableGenerator {
     str.append("#include \"" + target + "helperFuncs.h\"\n")
     str.append(nested.outputType(target))
     str.append(' ')
-    if (!isPrimitiveType(nested.outputType) && nested.outputType!="Unit") str.append(" *")
+    if (!isPrimitiveType(nested.outputType) && nested.outputType!="Unit" && Config.cppMemMgr!="refcnt") str.append(" *")
     str.append(executableName)
     str.append('(')
     str.append(generateInputs())
@@ -129,7 +133,7 @@ trait CppNestedGenerator extends NestedGenerator with CppExecutableGenerator {
       if (!first) str.append(", ")
       first = false
       str.append(op.outputType(target,sym))
-      if (!isPrimitiveType(op.outputType(sym))) str.append(" *")
+      str.append(addRef(op.outputType(sym)))
       str.append(' ')
       str.append(getSymHost(op, sym))
     }
