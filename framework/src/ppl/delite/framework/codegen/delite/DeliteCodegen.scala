@@ -66,7 +66,7 @@ trait DeliteCodegen extends GenericFatCodegen with BaseGenStaticData with ppl.de
 
   // fusion stuff...
   override def unapplySimpleIndex(e: Def[Any]) = ifGenAgree(_.unapplySimpleIndex(e))
-  override def unapplySimpleDomain(e: Def[Int]) = ifGenAgree(_.unapplySimpleDomain(e))
+  override def unapplySimpleDomain(e: Def[Long]) = ifGenAgree(_.unapplySimpleDomain(e))
   override def unapplySimpleCollect(e: Def[Any]) = ifGenAgree(_.unapplySimpleCollect(e))
   override def unapplySimpleCollectIf(e: Def[Any]) = ifGenAgree(_.unapplySimpleCollectIf(e))
 

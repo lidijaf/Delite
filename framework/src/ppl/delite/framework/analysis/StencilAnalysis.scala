@@ -15,8 +15,8 @@ trait StencilExp extends LoopsExp {
   abstract class AccessPattern
   object all extends AccessPattern { override def toString = "all" }
   object one extends AccessPattern { override def toString = "one" }
-  case class Interval(offsetMultiplier: Exp[Int], stride: Exp[Int], length: Exp[Int]) extends AccessPattern
-  case class Constant(index: Exp[Int]) extends AccessPattern
+  case class Interval(offsetMultiplier: Exp[Long], stride: Exp[Long], length: Exp[Long]) extends AccessPattern
+  case class Constant(index: Exp[Long]) extends AccessPattern
   
   // from a data symbol (e.g. DeliteArray) to its access pattern
   type Stencil = HashMap[Exp[Any],AccessPattern]      
@@ -79,10 +79,10 @@ trait StencilAnalysis extends FatBlockTraversal {
    * Determine if the index x corresponds to a chunk of the input, starting from ref
    * Currently, only stride == 1 is allowed (i.e., we assume stride = 1).
    */
-   def chunked(ref: Sym[Int], x: Exp[Int], context: List[Stm]): Option[(Exp[Int],Exp[Int],Exp[Int])] = {     
+   def chunked(ref: Sym[Long], x: Exp[Long], context: List[Stm]): Option[(Exp[Long],Exp[Long],Exp[Long])] = {     
      // checks if the given loop index corresponds to the bound variable of any loop
      // in the current context, and if it does, returns the loop size     
-     def loopSize(i: Exp[Int]) = {
+     def loopSize(i: Exp[Long]) = {
        val z = context.map(_.rhs) collect { 
          case l:AbstractLoop[_] if l.v == i => (l,l.size) 
          case Reflect(l:AbstractLoop[_],u,es) if l.v == i => (l,l.size) 
@@ -107,9 +107,9 @@ trait StencilAnalysis extends FatBlockTraversal {
      // we expect the offset (start) to be in the form index*multiplier or multiplier*index
      // can we have anything else?
      //   stuff like start = (v+2)*numCols is not allowed (along with other arbitrary index arithmetic)
-     def startMultiplier(i: Exp[Int]): Option[Exp[Int]] = i match {
-       case Def(IntTimes(a,b)) if a == ref => Some(b)
-       case Def(IntTimes(a,b)) if b == ref => Some(a)
+     def startMultiplier(i: Exp[Long]): Option[Exp[Long]] = i match {
+       case Def(LongTimes(a,b)) if a == ref => Some(b)
+       case Def(LongTimes(a,b)) if b == ref => Some(a)
        case _ => 
         log("    !! could not find startMultiplier for " + i.toString)
         None
@@ -120,47 +120,47 @@ trait StencilAnalysis extends FatBlockTraversal {
        // current context. if the index is bound to the outer loop, the chunk size is equal that loop's length.
             
        // index*stride + start
-       case Def(IntPlus(Def(IntTimes(a,b)),c)) if a != ref && loopSize(a).isDefined && startMultiplier(c).isDefined => 
+       case Def(LongPlus(Def(LongTimes(a,b)),c)) if a != ref && loopSize(a).isDefined && startMultiplier(c).isDefined => 
          log("    found index*stride + start")
-         log("    IntPlus(IntTimes(" + strDef(a) + ", " + strDef(b) + "), " + strDef(c) + ")")
+         log("    Plus(Times(" + strDef(a) + ", " + strDef(b) + "), " + strDef(c) + ")")
          Some(startMultiplier(c).get,b,loopSize(a).get)
       
        // stride*index + start 
-       case Def(IntPlus(Def(IntTimes(a,b)),c)) if b != ref && loopSize(b).isDefined && startMultiplier(c).isDefined =>
+       case Def(LongPlus(Def(LongTimes(a,b)),c)) if b != ref && loopSize(b).isDefined && startMultiplier(c).isDefined =>
          log("    found stride*index + start")
-         log("    IntPlus(IntTimes(" + strDef(a) + ", " + strDef(b) + "), " + strDef(c) + ")")
+         log("    Plus(Times(" + strDef(a) + ", " + strDef(b) + "), " + strDef(c) + ")")
          Some(startMultiplier(c).get,a,loopSize(b).get)
        
        // start + index*stride 
-       case Def(IntPlus(a,Def(IntTimes(b,c)))) if b != ref && loopSize(b).isDefined && startMultiplier(a).isDefined => 
+       case Def(LongPlus(a,Def(LongTimes(b,c)))) if b != ref && loopSize(b).isDefined && startMultiplier(a).isDefined => 
          log("    found start + index*stride")
-         log("    found IntPlus(" + strDef(a) + ", IntTimes(" + strDef(b) + ", " + strDef(c) + "))")
+         log("    found Plus(" + strDef(a) + ", Times(" + strDef(b) + ", " + strDef(c) + "))")
          Some(startMultiplier(a).get,c,loopSize(b).get)
         
        // start + stride*index
-       case Def(IntPlus(a,Def(IntTimes(b,c)))) if c != ref && loopSize(c).isDefined && startMultiplier(a).isDefined => 
+       case Def(LongPlus(a,Def(LongTimes(b,c)))) if c != ref && loopSize(c).isDefined && startMultiplier(a).isDefined => 
          log("    found start + stride*index")
-         log("    found IntPlus(" + strDef(a) + ", IntTimes(" + strDef(b) + ", " + strDef(c) + "))")
+         log("    found Plus(" + strDef(a) + ", Times(" + strDef(b) + ", " + strDef(c) + "))")
          Some(startMultiplier(a).get,b,loopSize(c).get)       
       
        // index + start (i.e. stride == 1)
-       case Def(IntPlus(a,b)) if a != ref && loopSize(a).isDefined && startMultiplier(b).isDefined =>
+       case Def(LongPlus(a,b)) if a != ref && loopSize(a).isDefined && startMultiplier(b).isDefined =>
          log("    found index + start")
-         log("    found IntPlus(" + strDef(a) + ", " + strDef(b) + ")")
+         log("    found Plus(" + strDef(a) + ", " + strDef(b) + ")")
          Some(startMultiplier(b).get,Const(1),loopSize(a).get)       
 
        // start + index (i.e. stride == 1)
-       case Def(IntPlus(a,b)) if b != ref && loopSize(b).isDefined && startMultiplier(a).isDefined =>
+       case Def(LongPlus(a,b)) if b != ref && loopSize(b).isDefined && startMultiplier(a).isDefined =>
          log("    found start + index")
-         log("    found IntPlus(" + strDef(a) + ", " + strDef(b) + ")")
+         log("    found Plus(" + strDef(a) + ", " + strDef(b) + ")")
          Some(startMultiplier(a).get,Const(1),loopSize(b).get)       
        
-       case Def(IntPlus(Def(IntTimes(a,b)),c)) => 
-         log("    xx IntPlus(IntTimes(" + strDef(a) + ", " + strDef(b) + "), " + strDef(c) + ")")
+       case Def(LongPlus(Def(LongTimes(a,b)),c)) => 
+         log("    xx Plus(Times(" + strDef(a) + ", " + strDef(b) + "), " + strDef(c) + ")")
          None
          
-       case Def(IntPlus(a,Def(IntTimes(b,c)))) => 
-         log("    xx found IntPlus(" + strDef(a) + ", IntTimes(" + strDef(b) + ", " + strDef(c) + "))")
+       case Def(LongPlus(a,Def(LongTimes(b,c)))) => 
+         log("    xx found Plus(" + strDef(a) + ", Times(" + strDef(b) + ", " + strDef(c) + "))")
          None
       
        // index
@@ -177,9 +177,9 @@ trait StencilAnalysis extends FatBlockTraversal {
    * For a given IR node, determine any constraints it imposes with respect to
    * the loop variable v.
    */
-  def examine(x: Stm, v: Sym[Int], stencil: Stencil, context: List[Stm]) {
+  def examine(x: Stm, v: Sym[Long], stencil: Stencil, context: List[Stm]) {
 
-    def processArrayAccess(a: Exp[DeliteArray[Any]], i: Exp[Int]) {
+    def processArrayAccess(a: Exp[DeliteArray[Any]], i: Exp[Long]) {
       // TODO: if we already have an entry for 'a' in the stencil, what should we do?
       // take the most conservative value?
       
@@ -218,7 +218,7 @@ trait StencilAnalysis extends FatBlockTraversal {
    * For the given loop element, determine all index constraints for all
    * DeliteCollections used in its body. 
    */
-  def process[A](s: Sym[A], v: Sym[Int], body: Def[_]) { 
+  def process[A](s: Sym[A], v: Sym[Long], body: Def[_]) { 
     body match {
         
       case DeliteForeachElem(func) =>

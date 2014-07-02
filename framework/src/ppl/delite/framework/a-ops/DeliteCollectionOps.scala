@@ -14,9 +14,9 @@ trait DeliteCollectionOps extends Interfaces with Variables {
   // AKS: Is DCInterfaceOps still useful for anything? Are they meant to guarantee that dc_* static call will succeed?
   // should this be split into read and write interfaces?
   trait DCInterfaceOps[+T,A] extends InterfaceOps[T] {
-    def dcSize(implicit ctx: SourceContext): Rep[Int] 
-    def dcApply(n: Rep[Int])(implicit ctx: SourceContext): Rep[A] 
-    def dcUpdate(n: Rep[Int], y: Rep[A])(implicit ctx: SourceContext): Rep[Unit]
+    def dcSize(implicit ctx: SourceContext): Rep[Long] 
+    def dcApply(n: Rep[Long])(implicit ctx: SourceContext): Rep[A] 
+    def dcUpdate(n: Rep[Long], y: Rep[A])(implicit ctx: SourceContext): Rep[Unit]
   }
 
   trait DCInterface[+T,A] extends Interface[T] {
@@ -28,22 +28,22 @@ trait DeliteCollectionOps extends Interfaces with Variables {
   // unlike before, don't assume that we know how to generate dcSize,dcApply,dcUpdate at run-time
   class DeliteCollectionInterfaceOps[A:Manifest](val intf: DCInterface[DeliteCollection[A],A]) {
     def dcSize(implicit ctx: SourceContext) = intf.ops.dcSize
-    def dcApply(n: Rep[Int])(implicit ctx: SourceContext) = intf.ops.dcApply(n) 
-    def dcUpdate(n: Rep[Int], y: Rep[A])(implicit ctx: SourceContext) = intf.ops.dcUpdate(n,y)
+    def dcApply(n: Rep[Long])(implicit ctx: SourceContext) = intf.ops.dcApply(n) 
+    def dcUpdate(n: Rep[Long], y: Rep[A])(implicit ctx: SourceContext) = intf.ops.dcUpdate(n,y)
   }
   
-  def dc_size[A:Manifest](x: Rep[DeliteCollection[A]])(implicit ctx: SourceContext): Rep[Int]
-  def dc_apply[A:Manifest](x: Rep[DeliteCollection[A]], n: Rep[Int])(implicit ctx: SourceContext): Rep[A]
-  def dc_update[A:Manifest](x: Rep[DeliteCollection[A]], n: Rep[Int], y: Rep[A])(implicit ctx: SourceContext): Rep[Unit]
+  def dc_size[A:Manifest](x: Rep[DeliteCollection[A]])(implicit ctx: SourceContext): Rep[Long]
+  def dc_apply[A:Manifest](x: Rep[DeliteCollection[A]], n: Rep[Long])(implicit ctx: SourceContext): Rep[A]
+  def dc_update[A:Manifest](x: Rep[DeliteCollection[A]], n: Rep[Long], y: Rep[A])(implicit ctx: SourceContext): Rep[Unit]
 }
 
 trait DeliteCollectionOpsExp extends DeliteCollectionOps with VariablesExp with ExceptionOpsExp with BaseFatExp with EffectExp { this: DeliteOpsExp =>
-  case class DeliteCollectionSize[A:Manifest](x: Exp[DeliteCollection[A]]) extends Def[Int]
-  case class DeliteCollectionApply[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Int]) extends Def[A] {
+  case class DeliteCollectionSize[A:Manifest](x: Exp[DeliteCollection[A]]) extends Def[Long]
+  case class DeliteCollectionApply[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long]) extends Def[A] {
     def mA = manifest[A]
   }
-  case class DeliteCollectionUpdate[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Int], y: Exp[A]) extends Def[Unit]
-  case class DeliteCollectionAppend[A:Manifest](x: Exp[DeliteCollection[A]], i: Exp[Int], y: Exp[A]) extends Def[Unit]
+  case class DeliteCollectionUpdate[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long], y: Exp[A]) extends Def[Unit]
+  case class DeliteCollectionAppend[A:Manifest](x: Exp[DeliteCollection[A]], i: Exp[Long], y: Exp[A]) extends Def[Unit]
   case class DeliteCollectionUnsafeSetData[A:Manifest](x: Exp[DeliteCollection[A]], d: Exp[DeliteArray[A]]) extends Def[Unit] { // legacy...
     def m = manifest[A]
   }
@@ -62,11 +62,11 @@ trait DeliteCollectionOpsExp extends DeliteCollectionOps with VariablesExp with 
       /*throw new RuntimeException*/printlog("warning: no static implementation found for dc_size on " + findDefinition(x.asInstanceOf[Sym[DeliteCollection[A]]]).get)
       reflectPure(DeliteCollectionSize(x))
   }
-  def dc_apply[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Int])(implicit ctx: SourceContext): Exp[A] = {
+  def dc_apply[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long])(implicit ctx: SourceContext): Exp[A] = {
     /*throw new RuntimeException*/printlog("warning: no static implementation found for dc_apply on " + findDefinition(x.asInstanceOf[Sym[DeliteCollection[A]]]).get + " --- x.tp is " + x.tp)
     reflectPure(DeliteCollectionApply(x,n))
   }
-  def dc_update[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Int], y: Exp[A])(implicit ctx: SourceContext): Exp[Unit] = {
+  def dc_update[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long], y: Exp[A])(implicit ctx: SourceContext): Exp[Unit] = {
     /*throw new RuntimeException*/printlog("warning: no static implementation found for dc_update")
     reflectWrite(x)(DeliteCollectionUpdate(x,n,y))
   }
@@ -76,24 +76,24 @@ trait DeliteCollectionOpsExp extends DeliteCollectionOps with VariablesExp with 
   
   // -- ParBuffer methods
    
-  def dc_set_logical_size[A:Manifest](x: Exp[DeliteCollection[A]], y: Exp[Int])(implicit ctx: SourceContext): Exp[Unit] = {
+  def dc_set_logical_size[A:Manifest](x: Exp[DeliteCollection[A]], y: Exp[Long])(implicit ctx: SourceContext): Exp[Unit] = {
     //reflectPure(DeliteCollectionSetLogicalSize(x,y))    
     fatal(unit("dc_set_logical_size called without any implementation on " + x.toString))    
   }  
   /* returns true if the element y can be appended to collection x */
-  def dc_appendable[A:Manifest](x: Exp[DeliteCollection[A]], i: Exp[Int], y: Exp[A])(implicit ctx: SourceContext): Exp[Boolean] = {
+  def dc_appendable[A:Manifest](x: Exp[DeliteCollection[A]], i: Exp[Long], y: Exp[A])(implicit ctx: SourceContext): Exp[Boolean] = {
     fatal(unit("dc_appendable called without any implementation on " + x.toString)) 
   }
   /* append the element y to the collection x, returns unit */
-  def dc_append[A:Manifest](x: Exp[DeliteCollection[A]], i: Exp[Int], y: Exp[A])(implicit ctx: SourceContext): Exp[Unit] = {
+  def dc_append[A:Manifest](x: Exp[DeliteCollection[A]], i: Exp[Long], y: Exp[A])(implicit ctx: SourceContext): Exp[Unit] = {
     // reflectWrite(x)(DeliteCollectionAppend(x,i,y))
     // unit(true)
     fatal(unit("dc_append called without any implementation on " + x.toString + " with type " + x.tp.toString /*findDefinition(x.asInstanceOf[Sym[DeliteCollection[A]]]).get*/))    
   }
-  def dc_alloc[A:Manifest,CA<:DeliteCollection[A]:Manifest](x: Exp[CA], size: Exp[Int])(implicit ctx: SourceContext): Exp[CA] = {
+  def dc_alloc[A:Manifest,CA<:DeliteCollection[A]:Manifest](x: Exp[CA], size: Exp[Long])(implicit ctx: SourceContext): Exp[CA] = {
     fatal(unit("dc_alloc called without any implementation on " + x.toString))
   }  
-  def dc_copy[A:Manifest](src: Exp[DeliteCollection[A]], srcPos: Exp[Int], dst: Exp[DeliteCollection[A]], dstPos: Exp[Int], size: Exp[Int])(implicit ctx: SourceContext): Exp[Unit] = {
+  def dc_copy[A:Manifest](src: Exp[DeliteCollection[A]], srcPos: Exp[Long], dst: Exp[DeliteCollection[A]], dstPos: Exp[Long], size: Exp[Long])(implicit ctx: SourceContext): Exp[Unit] = {
     fatal(unit("dc_copy called without any implementation on " + src.toString))
   }   
 

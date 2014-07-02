@@ -230,7 +230,7 @@ trait TPCHQ6Trait extends TPCHBaseTrait {
     val lineItems = loadLineItems()
     tic(lineItems.size)
 
-    val q = lineItems Where (l => l.l_shipdate >= Date("1994-01-01") && l.l_shipdate < Date("1995-01-01") && l.l_discount >= 0.05 && l.l_discount <= 0.07 && l.l_quantity < 24) 
+    val q = lineItems.Where(l => l.l_shipdate >= Date("1994-01-01") && l.l_shipdate < Date("1995-01-01") && l.l_discount >= 0.05 && l.l_discount <= 0.07 && l.l_quantity < 24.0)
     val revenue = q.Sum(l => l.l_extendedprice * l.l_discount)
 
     toc(revenue)

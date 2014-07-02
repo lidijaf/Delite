@@ -40,7 +40,7 @@ trait InputReaderOpsExp extends InputReaderOps with BaseFatExp { this: OptiQLExp
   //TODO: it's unfortunate that string split returns an Array rather than a DeliteArray, should we change the signature or have a conversion method?
   def optiql_table_from_string[T<:Record:Manifest](data: Rep[String], rowSep: Rep[String], colSep: Rep[String]) = {
     val jarray = data.split(rowSep)
-    Table(DeliteArray.fromFunction(jarray.length)(i => optiql_table_record_parser_impl[T](jarray(i), colSep)))
+    Table(DeliteArray.fromFunction(jarray.length)(i => optiql_table_record_parser_impl[T](jarray(i.toInt), colSep)))
   }
 
   override def mirror[A:Manifest](e: Def[A], f: Transformer)(implicit ctx: SourceContext): Exp[A] = (e match {
@@ -92,9 +92,9 @@ trait InputReaderImplOpsStandard extends InputReaderImplOps { this: OptiQLLift w
 
   //TODO: this is a map
   def optiql_table_from_seq_impl[T:Manifest](elems: Seq[Rep[T]]) = {
-    val array = DeliteArray[T](elems.length)
+    val array = DeliteArray[T](elems.length.toLong)
     for (i <- (0 until elems.length): Range) {
-      array(i) = elems(i)
+      array(i.toLong) = elems(i)
     }
     Table(array.unsafeImmutable, array.length)
   }

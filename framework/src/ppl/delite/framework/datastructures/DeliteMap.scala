@@ -23,7 +23,7 @@ trait DeliteMapOps extends Base {
   implicit def repDMapToDMapOps[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]]) = new DeliteMapOpsCls(dm)
 
   class DeliteMapOpsCls[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]]) {
-    def size: Rep[Int] = dmap_size(dm)
+    def size: Rep[Long] = dmap_size(dm)
     def get(key: Rep[K]): Rep[V] = dmap_get(dm, key)
     def apply(key: Rep[K]): Rep[V] = dmap_get(dm, key)
     def contains(key: Rep[K]): Rep[Boolean] = dmap_contains(dm, key)
@@ -34,7 +34,7 @@ trait DeliteMapOps extends Base {
 
   def dmap_fromCollection[A:Manifest,K:Manifest,V:Manifest](in: Rep[DeliteCollection[A]], keyFunc: Rep[A] => Rep[K], valFunc: Rep[A] => Rep[V], conflictRes: (Rep[V],Rep[V]) => Rep[V]): Rep[DeliteMap[K,V]]
   def dmap_fromCollection[A:Manifest,K:Manifest,V:Manifest](in: Rep[DeliteCollection[A]], keyFunc: Rep[A] => Rep[K], values: Rep[DeliteArray[V]]): Rep[DeliteMap[K,V]]
-  def dmap_size[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext): Rep[Int]
+  def dmap_size[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext): Rep[Long]
   def dmap_get[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]], key: Rep[K])(implicit ctx: SourceContext): Rep[V]
   def dmap_contains[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]], key: Rep[K])(implicit ctx: SourceContext): Rep[Boolean]
   def dmap_keys[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext): Rep[DeliteArray[K]]
@@ -47,9 +47,9 @@ trait DeliteMapOpsExp extends DeliteMapOps with DeliteStructsExp with EqualExpBr
 
   trait DeliteIndex[K]
 
-  case class DeliteIndexGet[K:Manifest](index: Rep[DeliteIndex[K]], key: Rep[K]) extends DefWithManifest[K,Int]
+  case class DeliteIndexGet[K:Manifest](index: Rep[DeliteIndex[K]], key: Rep[K]) extends DefWithManifest[K,Long]
 
-  case class DeliteMapNewImm[K:Manifest,V:Manifest](keys: Rep[DeliteArray[K]], values: Rep[DeliteArray[V]], index: Rep[DeliteIndex[K]], size: Rep[Int]) extends DeliteStruct[DeliteMap[K,V]] {
+  case class DeliteMapNewImm[K:Manifest,V:Manifest](keys: Rep[DeliteArray[K]], values: Rep[DeliteArray[V]], index: Rep[DeliteIndex[K]], size: Rep[Long]) extends DeliteStruct[DeliteMap[K,V]] {
     val elems = copyTransformedElems(Seq("keys" -> keys, "values" -> values, "index" -> index, "size" -> size))
     val mK = manifest[K]
     val mV = manifest[V]
@@ -58,7 +58,7 @@ trait DeliteMapOpsExp extends DeliteMapOps with DeliteStructsExp with EqualExpBr
   case class DeliteMapValues[A:Manifest,K:Manifest,V:Manifest](in: Exp[DeliteCollection[A]], keyFunc: Exp[A] => Exp[K], valFunc: Exp[A] => Exp[V], reduceFunc: (Exp[V],Exp[V]) => Exp[V])
     extends DeliteOpMappedGroupByReduce[A,K,V,DeliteArray[V]] {
 
-    def alloc(len: Exp[Int]) = DeliteArray[V](len)
+    def alloc(len: Exp[Long]) = DeliteArray[V](len)
     val size = copyTransformedOrElse(_.size)(dc_size(in))
     def zero = unit(null).asInstanceOf[Exp[V]]
   }
@@ -66,7 +66,7 @@ trait DeliteMapOpsExp extends DeliteMapOps with DeliteStructsExp with EqualExpBr
   case class DeliteMapKeys[A:Manifest,K:Manifest](in: Exp[DeliteCollection[A]], keyFunc: Exp[A] => Exp[K])
     extends DeliteOpMappedGroupByReduce[A,K,K,DeliteArray[K]] {
 
-    def alloc(len: Exp[Int]) = DeliteArray[K](len)
+    def alloc(len: Exp[Long]) = DeliteArray[K](len)
     val size = copyTransformedOrElse(_.size)(dc_size(in))
     def zero = unit(null).asInstanceOf[Exp[K]]
     def valFunc = keyFunc
@@ -93,9 +93,9 @@ trait DeliteMapOpsExp extends DeliteMapOps with DeliteStructsExp with EqualExpBr
 
   def dmap_keys[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext) = field[DeliteArray[K]](dm, "keys")
   def dmap_values[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext) = field[DeliteArray[V]](dm, "values")
-  def dmap_size[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext) = field[Int](dm, "size")
+  def dmap_size[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext) = field[Long](dm, "size")
   protected def dmap_index[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext) = field[DeliteIndex[K]](dm, "index")
-  def dindex_get[K:Manifest](index: Rep[DeliteIndex[K]], key: Rep[K])(implicit ctx: SourceContext): Rep[Int] = reflectPure(DeliteIndexGet(index, key))
+  def dindex_get[K:Manifest](index: Rep[DeliteIndex[K]], key: Rep[K])(implicit ctx: SourceContext): Rep[Long] = reflectPure(DeliteIndexGet(index, key))
 
   /*def dmap_toArray[K:Manifest,V:Manifest](dm: Rep[DeliteMap[K,V]])(implicit ctx: SourceContext) = {
     dmap_keys(dm).zip(dmap_values(dm)){ (k,v) => t2(k,v) } //note: this should be eliminated if SoA transformations are enabled
@@ -125,7 +125,7 @@ trait DeliteMapOpsExp extends DeliteMapOps with DeliteStructsExp with EqualExpBr
   }).asInstanceOf[Exp[A]]
 
   override def unapplyStructType[T:Manifest]: Option[(StructTag[T], List[(String,Manifest[_])])] = manifest[T] match {
-    case t if t.erasure == classOf[DeliteMap[_,_]] => Some((classTag(t), List("keys" -> darrayManifest(t.typeArguments(0)), "values" -> darrayManifest(t.typeArguments(1)), "index" -> makeManifest(classOf[DeliteIndex[_]], List(t.typeArguments(0))), "size" -> manifest[Int])))
+    case t if t.erasure == classOf[DeliteMap[_,_]] => Some((classTag(t), List("keys" -> darrayManifest(t.typeArguments(0)), "values" -> darrayManifest(t.typeArguments(1)), "index" -> makeManifest(classOf[DeliteIndex[_]], List(t.typeArguments(0))), "size" -> manifest[Long])))
     case _ => super.unapplyStructType
   }
 

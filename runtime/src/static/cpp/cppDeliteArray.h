@@ -8,62 +8,62 @@ template <class T>
 class cppDeliteArray {
 public:
     T *data;
-    int length;
+    size_t length;
 
     // Constructor
-    cppDeliteArray(int _length) {
+    cppDeliteArray(size_t _length) {
         length = _length;
         //TODO: remove initialization to zero
         data = new T[length]();
     }
 
-    cppDeliteArray(T *_data, int _length) {
+    cppDeliteArray(T *_data, size_t _length) {
         length = _length;
         data = _data;
     }
 
-    T apply(int idx) {
+    T apply(size_t idx) {
         return data[idx];
     }
 
-    void update(int idx, T value) {
+    void update(size_t idx, T value) {
         data[idx] = value;
     }
 
-    // DeliteCoolection
-    int size() {
+    // DeliteCollection
+    size_t size() {
         return length;
     }
 
-    T dcApply(int idx) {
+    T dcApply(size_t idx) {
         return data[idx];
     }
 
-    void dcUpdate(int idx, T value) {
+    void dcUpdate(size_t idx, T value) {
         data[idx] = value;
     }
     
     // Additional functions
-    void copy(int srcOffset, cppDeliteArray<T> *dest, int destOffset, int length) {
+    void copy(size_t srcOffset, cppDeliteArray<T> *dest, size_t destOffset, size_t length) {
       memmove(dest->data + destOffset, data + srcOffset, sizeof(T) * length);
     }
 
     cppDeliteArray<T> *arrayunion(cppDeliteArray<T> *rhs) {
-      int newLength = length + rhs->length;
+      size_t newLength = length + rhs->length;
       cppDeliteArray<T> *result = new cppDeliteArray<T>(newLength);
-      int acc = 0;
-      for(int i=0; i<length; i++) {
+      size_t acc = 0;
+      for(size_t i=0; i<length; i++) {
         T elem = data[i];
-        int j = 0;
+        size_t j = 0;
         while(j < acc) {
           if(elem == result->data[j]) break;
           j += 1;
         }
         if(j == acc) result->data[acc++] = elem;
       }
-      for(int i=0; i<rhs->length; i++) {
+      for(size_t i=0; i<rhs->length; i++) {
         T elem = rhs->data[i];
-        int j = 0;
+        size_t j = 0;
         while(j < acc) {
           if(elem == result->data[j]) break;
           j += 1;
@@ -76,18 +76,18 @@ public:
     }
 
     cppDeliteArray<T> *intersect(cppDeliteArray<T> *rhs) {
-      int newLength = max(length, rhs->length);
+      size_t newLength = max(length, rhs->length);
       cppDeliteArray<T> *result = new cppDeliteArray<T>(newLength);
-      int acc = 0;
-      for(int i=0; i<length; i++)
-        for(int j=0; j<rhs->length; j++) 
+      size_t acc = 0;
+      for(size_t i=0; i<length; i++)
+        for(size_t j=0; j<rhs->length; j++) 
           if(data[i] == rhs->data[j]) result->data[acc++] = data[i];
       result->length = acc-1;
       //TODO: Need to shrink the actual array size?
       return result;
     }
     
-    cppDeliteArray<T> *take(int n) {
+    cppDeliteArray<T> *take(size_t n) {
       cppDeliteArray<T> *result = new cppDeliteArray<T>(n);
       memcpy(result->data, data, sizeof(T) * n);
       return result;

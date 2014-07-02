@@ -52,8 +52,8 @@ trait QueryableOps extends Base { this: OptiQL =>
   def queryable_selectMany[T:Manifest, R:Manifest](s: Rep[Table[T]], resultSelector: Rep[T] => Rep[Table[R]]): Rep[Table[R]]
   def queryable_sum[T:Manifest, N:Numeric:Manifest](s: Rep[Table[T]], sumSelector: Rep[T] => Rep[N]): Rep[N]
   def queryable_average[T:Manifest, N:Numeric:Manifest](s: Rep[Table[T]], avgSelector: Rep[T] => Rep[N]): Rep[N]
-  def queryable_count[T:Manifest](s: Rep[Table[T]]): Rep[Int]  
-  def queryable_count_where[T:Manifest](s: Rep[Table[T]], predicate: Rep[T] => Rep[Boolean]): Rep[Int]
+  def queryable_count[T:Manifest](s: Rep[Table[T]]): Rep[Long]  
+  def queryable_count_where[T:Manifest](s: Rep[Table[T]], predicate: Rep[T] => Rep[Boolean]): Rep[Long]
   def queryable_distinct[T:Manifest, K:Manifest](s: Rep[Table[T]], keySelector: Rep[T] => Rep[K]): Rep[Table[T]]
   def queryable_max[T:Manifest, N:Ordering:Manifest](s: Rep[Table[T]], maxSelector: Rep[T] => Rep[N]): Rep[N]
   def queryable_min[T:Manifest, N:Ordering:Manifest](s: Rep[Table[T]], minSelector: Rep[T] => Rep[N]): Rep[N]
@@ -75,21 +75,21 @@ trait QueryableOps extends Base { this: OptiQL =>
 trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with DeliteStructsExp { this: OptiQLExp =>
   
   case class QueryableWhere[T:Manifest](in: Exp[Table[T]], cond: Exp[T] => Exp[Boolean]) extends DeliteOpFilter[T, T, Table[T]] {
-    override def alloc(len: Exp[Int]) = Table(len)
+    override def alloc(len: Exp[Long]) = Table(len)
     val size = copyTransformedOrElse(_.size)(in.size)
     def func = e => e
     val mT = manifest[T]
   }
      
   case class QueryableSelect[T:Manifest, R:Manifest](in: Exp[Table[T]], func: Exp[T] => Exp[R]) extends DeliteOpMap[T, R, Table[R]] {
-    override def alloc(len: Exp[Int]) = Table(len)
+    override def alloc(len: Exp[Long]) = Table(len)
     val size = copyTransformedOrElse(_.size)(in.size)
     val mT = manifest[T]
     val mR = manifest[R]
   }
 
   case class QueryableSelectMany[T:Manifest, R:Manifest](in: Exp[Table[T]], func: Exp[T] => Exp[Table[R]]) extends DeliteOpFlatMap[T, R, Table[R]] {
-    override def alloc(len: Exp[Int]) = Table(len)
+    override def alloc(len: Exp[Long]) = Table(len)
     val size = copyTransformedOrElse(_.size)(in.size)
     val mT = manifest[T]
     val mR = manifest[R]
@@ -139,8 +139,8 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
   }
 
   case class QueryableGroupValues[T:Manifest, K:Manifest](in: Exp[Table[T]], keyFunc: Exp[T] => Exp[K]) extends DeliteOpGroupBy[K,T,Table[T],DeliteArray[Table[T]]] {
-    def alloc(len: Exp[Int]) = DeliteArray[Table[T]](len)
-    def allocI(len: Exp[Int]) = Table[T](len)
+    def alloc(len: Exp[Long]) = DeliteArray[Table[T]](len)
+    def allocI(len: Exp[Long]) = Table[T](len)
     val size = copyTransformedOrElse(_.size)(in.size)
 
     val mT = manifest[T]
@@ -148,7 +148,7 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
   }
 
   case class QueryableKeysDistinct[T:Manifest, K:Manifest](in: Exp[Table[T]], keyFunc: Exp[T] => Exp[K]) extends DeliteOpMappedGroupByReduce[T, K, K, DeliteArray[K]] {
-    def alloc(len: Exp[Int]) = DeliteArray[K](len)
+    def alloc(len: Exp[Long]) = DeliteArray[K](len)
     val size = copyTransformedOrElse(_.size)(in.size)
     def zero = zeroType[K]
     def valFunc = keyFunc
@@ -156,7 +156,7 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
   }
 
   case class QueryableDistinct[T:Manifest, K:Manifest](in: Exp[Table[T]], keyFunc: Exp[T] => Exp[K]) extends DeliteOpGroupByReduce[K, T, Table[T]] {
-    def alloc(len: Exp[Int]) = Table[T](len)
+    def alloc(len: Exp[Long]) = Table[T](len)
     val size = copyTransformedOrElse(_.size)(in.size)
     def zero = zeroType[T]
     def reduceFunc = (a,b) => a
@@ -166,7 +166,7 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
   }
 
 
-  case class QueryableCountWhere[T:Manifest](in: Exp[Table[T]], cond: Exp[T] => Exp[Boolean]) extends DeliteOpFilterReduce[T,Int] {
+  case class QueryableCountWhere[T:Manifest](in: Exp[Table[T]], cond: Exp[T] => Exp[Boolean]) extends DeliteOpFilterReduce[T,Long] {
     val size = copyTransformedOrElse(_.size)(in.size)
     def zero = unit(0)
     def func = a => unit(1)       
@@ -175,7 +175,7 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
     val mT = manifest[T]
   }
   
-  case class QueryableCount[T:Manifest](s: Exp[Table[T]]) extends DeliteOpSingleWithManifest[T,Int](reifyEffectsHere(s.size))
+  case class QueryableCount[T:Manifest](s: Exp[Table[T]]) extends DeliteOpSingleWithManifest[T,Long](reifyEffectsHere(s.size))
   case class QueryableFirst[T:Manifest](s: Exp[Table[T]]) extends DeliteOpSingleTask[T](reifyEffectsHere(s(unit(0))))
   case class QueryableLast[T:Manifest](s: Exp[Table[T]]) extends DeliteOpSingleTask[T](reifyEffectsHere(s(s.size-1)))
 
@@ -315,7 +315,7 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
   }
 
   def queryable_sort_impl[T:Manifest, K:Manifest](s: Exp[Table[T]], comparator: (Exp[T],Exp[T]) => Exp[Int]): Exp[Table[T]] = {
-    val indices = DeliteArray.sortIndices(s.size)((i:Exp[Int],j:Exp[Int]) => comparator(s(i), s(j)))
+    val indices = DeliteArray.sortIndices(s.size)((i:Exp[Long],j:Exp[Long]) => comparator(s(i), s(j)))
     val sorted = DeliteArray.fromFunction(s.size)(i => s(indices(i)))
     Table(sorted, s.size)
   }
@@ -353,7 +353,7 @@ trait QueryableOpsExp extends QueryableOps with EffectExp with BaseFatExp with D
 trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
 
   case class QueryableSelectWhere[T:Manifest, R:Manifest](in: Exp[Table[T]], func: Exp[T] => Exp[R], cond: Exp[T] => Exp[Boolean]) extends DeliteOpFilter[T, R, Table[R]] {
-    override def alloc(len: Exp[Int]) = Table(len)
+    override def alloc(len: Exp[Long]) = Table(len)
     val size = copyTransformedOrElse(_.size)(in.size)
     val mT = manifest[T]
     val mR = manifest[R]
@@ -367,7 +367,7 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
   case class QueryableHashReduce[T:Manifest, K:Manifest, R:Manifest](in: Exp[Table[T]], keyFunc: Exp[T] => Exp[K], valFunc: Exp[T] => Exp[R], reduceFunc: (Exp[R],Exp[R]) => Exp[R], cond: Exp[T] => Exp[Boolean]) 
     extends DeliteOpFilteredGroupByReduce[T, K, R, Table[R]] {
 
-    def alloc(i: Exp[Int]) = Table[R](i)
+    def alloc(i: Exp[Long]) = Table[R](i)
     val size = copyTransformedOrElse(_.size)(in.size)
     def zero = zeroType[R]
 
@@ -376,8 +376,8 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
     val mR = manifest[R]
   }
 
-  case class QueryableDivide[T:Manifest](inA: Exp[Table[T]], inB: Exp[Table[Int]], func: (Exp[T],Exp[Int]) => Exp[T]) extends DeliteOpZipWith[T,Int,T,Table[T]] {
-    override def alloc(len: Exp[Int]) = Table(len)
+  case class QueryableDivide[T:Manifest](inA: Exp[Table[T]], inB: Exp[Table[Long]], func: (Exp[T],Exp[Long]) => Exp[T]) extends DeliteOpZipWith[T,Long,T,Table[T]] {
+    override def alloc(len: Exp[Long]) = Table(len)
     val size = copyTransformedOrElse(_.size)(inA.size)
     val mT = manifest[T]
   }
@@ -389,7 +389,7 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
     case _ => super.queryable_groupby(s, keySelector)
   }
 
-  private def hashReduce[A:Manifest,K:Manifest,T:Manifest,R:Manifest](resultSelector: Exp[T] => Exp[R], keySelector: Exp[A] => Exp[K]): Option[(Exp[A]=>Exp[R], (Exp[R],Exp[R])=>Exp[R], (Exp[R],Exp[Int])=>Exp[R])] = {
+  private def hashReduce[A:Manifest,K:Manifest,T:Manifest,R:Manifest](resultSelector: Exp[T] => Exp[R], keySelector: Exp[A] => Exp[K]): Option[(Exp[A]=>Exp[R], (Exp[R],Exp[R])=>Exp[R], (Exp[R],Exp[Long])=>Exp[R])] = {
     var failed = false
     val ctx = implicitly[SourceContext]
     def rewriteMap(value: Exp[Any]) = (value match {
@@ -397,7 +397,7 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
       case Def(Field(Def(Field(s,"key")),index)) => (a:Exp[A]) => field(keySelector(a),index)(value.tp,ctx)
       case Def(QueryableSum(s, sumSelector)) => sumSelector
       case Def(QueryableAverage(s, avgSelector, sum)) => avgSelector
-      case Def(QueryableCount(s)) => (a:Exp[A]) => unit(1)
+      case Def(QueryableCount(s)) => (a:Exp[A]) => unit(1L)
       case Def(QueryableMin(s, minSelector)) => minSelector
       case Def(QueryableMax(s, maxSelector)) => maxSelector
       //case Def(QueryableFirst(s)) => a
@@ -411,23 +411,23 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
       case Def(Field(Def(Field(s,"key")),index)) => (a:Exp[N],b:Exp[N]) => a
       case Def(sum@QueryableSum(s, sumSelector)) => (a:Exp[N],b:Exp[N]) => numeric_plus(a,b)(ntype(sum.N),mtype(sum.mN),ctx)
       case Def(QueryableAverage(s, avgSelector, sum)) => (a:Exp[N],b:Exp[N]) => numeric_plus(a,b)(ntype(sum.N),mtype(sum.mN),ctx)
-      case Def(QueryableCount(s)) => (a:Exp[N],b:Exp[N]) => numeric_plus(a,b)(ntype(implicitly[Numeric[Int]]),mtype(manifest[Int]),ctx)
+      case Def(QueryableCount(s)) => (a:Exp[N],b:Exp[N]) => numeric_plus(a,b)(ntype(implicitly[Numeric[Long]]),mtype(manifest[Long]),ctx)
       case Def(min@QueryableMin(s, minSelector)) => (a:Exp[N],b:Exp[N]) => ordering_min(a,b)(otype(min.oN),mtype(min.mN),ctx)
       case Def(max@QueryableMax(s, maxSelector)) => (a:Exp[N],b:Exp[N]) => ordering_max(a,b)(otype(max.oN),mtype(max.mN),ctx)
       case _ => failed = true; null
     }).asInstanceOf[(Exp[N],Exp[N])=>Exp[N]]
 
     def rewriteAverage[N](value: Exp[Any]) = (value match {
-      case Def(QueryableAverage(_,_,sum)) => (a:Exp[N],count:Exp[Int]) => numeric_divide(a, count)(ntype(sum.N),mtype(sum.mN),ctx)
-      case _ => (a:Exp[N],count:Exp[Int]) => a
-    }).asInstanceOf[(Exp[N],Exp[Int])=>Exp[N]]
+      case Def(QueryableAverage(_,_,sum)) => (a:Exp[N],count:Exp[Long]) => numeric_divide(a, count)(ntype(sum.N),mtype(sum.mN),ctx)
+      case _ => (a:Exp[N],count:Exp[Long]) => a
+    }).asInstanceOf[(Exp[N],Exp[Long])=>Exp[N]]
 
 
     val funcs = resultSelector(fresh[T]) match {
       case Def(Struct(tag: StructTag[R], elems)) => 
         val valueFunc = (a:Exp[A]) => struct[R](tag, elems map { case (key, value) => (key, rewriteMap(value)(a)) })
         val reduceFunc = (a:Exp[R],b:Exp[R]) => struct[R](tag, elems map { case (key, value) => (key, rewriteReduce(value)(field(a,key)(value.tp,ctx), field(b,key)(value.tp,ctx))) })
-        val averageFunc = (a:Exp[R],count:Exp[Int]) => struct[R](tag, elems map { case (key, value) => (key, rewriteAverage(value)(field(a,key)(value.tp,ctx), count)) })
+        val averageFunc = (a:Exp[R],count:Exp[Long]) => struct[R](tag, elems map { case (key, value) => (key, rewriteAverage(value)(field(a,key)(value.tp,ctx), count)) })
         (valueFunc, reduceFunc, averageFunc)
 
       case a => (rewriteMap(a), rewriteReduce[R](a), rewriteAverage[R](a))
@@ -443,7 +443,7 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
     case Def(g@QueryableGroupBy(origS: Exp[Table[a]], keySelector)) => hashReduce(resultSelector, keySelector)(g.mT,g.mK,manifest[T],manifest[R]) match { //GroupBy-Select fusion
       case Some((valueFunc, reduceFunc, averageFunc)) => 
         val hr = QueryableHashReduce(origS, keySelector, valueFunc, reduceFunc, (e:Exp[a]) => unit(true))(g.mT,g.mK,manifest[R])
-        val count = QueryableHashReduce(origS, keySelector, (e:Exp[a])=>unit(1), (a:Exp[Int],b:Exp[Int])=>a+b, (e:Exp[a])=>unit(true))(g.mT,g.mK,manifest[Int])
+        val count = QueryableHashReduce(origS, keySelector, (e:Exp[a])=>unit(1L), (a:Exp[Long],b:Exp[Long])=>a+b, (e:Exp[a])=>unit(true))(g.mT,g.mK,Manifest.Long)
         QueryableDivide(hr, count, averageFunc)
       case None => 
         Console.println("WARNING: unable to fuse GroupBy-Select")
@@ -452,7 +452,7 @@ trait QueryableOpsExpOpt extends QueryableOpsExp { this: OptiQLExp =>
     case Def(g@QueryableGroupByWhere(origS: Exp[Table[a]], keySelector, cond)) => hashReduce(resultSelector, keySelector)(g.mT,g.mK,manifest[T],manifest[R]) match {
       case Some((valueFunc, reduceFunc, averageFunc)) => 
         val hr = QueryableHashReduce(origS, keySelector, valueFunc, reduceFunc, cond)(g.mT,g.mK,manifest[R])
-        val count = QueryableHashReduce(origS, keySelector, (e:Exp[a]) => unit(1), (a:Exp[Int],b:Exp[Int])=>a+b, cond)(g.mT,g.mK,manifest[Int])
+        val count = QueryableHashReduce(origS, keySelector, (e:Exp[a]) => unit(1L), (a:Exp[Long],b:Exp[Long])=>a+b, cond)(g.mT,g.mK,Manifest.Long)
         QueryableDivide(hr, count, averageFunc)
       case None => 
         Console.println("WARNING: unable to fuse GroupBy-Select")

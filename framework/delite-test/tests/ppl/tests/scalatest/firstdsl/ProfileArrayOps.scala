@@ -54,17 +54,17 @@ trait ProfileArrayOpsExp extends ProfileArrayOps with NumericOpsExp
     else super.dc_size(x)
   }
 
-  override def dc_apply[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Int])
+  override def dc_apply[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long])
     (implicit ctx: SourceContext) = {
 
-    if (isProfileArray(x)) (profile_apply(asProfileArray(x),n)).asInstanceOf[Exp[A]]
+    if (isProfileArray(x)) (profile_apply(asProfileArray(x),n.toInt)).asInstanceOf[Exp[A]]
     else super.dc_apply(x,n)
   }
 
-  override def dc_update[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Int], y: Exp[A])
+  override def dc_update[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long], y: Exp[A])
     (implicit ctx: SourceContext) = {
 
-    if (isProfileArray(x)) profile_update(asProfileArray(x),n,y.asInstanceOf[Exp[Double]])
+    if (isProfileArray(x)) profile_update(asProfileArray(x),n.toInt,y.asInstanceOf[Exp[Double]])
     else super.dc_update(x,n,y)
   }
 

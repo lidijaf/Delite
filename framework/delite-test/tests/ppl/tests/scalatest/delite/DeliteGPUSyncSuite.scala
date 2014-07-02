@@ -31,12 +31,13 @@ trait DeliteGPULoopSync1 extends DeliteTestModule with DeliteTestDSLApplication 
   def main() = { 
 
     val v = DeliteArrayBuffer.fromFunction(10){ i => 0.0 }.mutable
-    var i = 0
-    while (i < v.length) {
+    var idx = 0L
+    while (idx < v.length) {
+      val i = readVar(idx)
       v(i) = i * 1.5 //mutation on CPU
       val sum = v.reduce( _ + _ )(0.0)
       collect(sum == 1.5*i*(i+1)/2)
-      i += 1
+      idx += 1
     }
     
     mkReport

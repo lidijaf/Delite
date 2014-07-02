@@ -404,10 +404,13 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
   }
 
   /**
-   * Escape quotes - necessary if we are emitting a constant quoted string value in the DEG
+   * DEG quotes - handles certain oddities between quoting constants in code vs. in the DEG 
    */
-  def escape(s: String) = s.replaceAllLiterally("\"","\\\"")
-
+  override def quote(x: Exp[Any]) = x match {
+    case Const(s: String) => super.quote(x).replaceAllLiterally("\"","\\\"") //escape constant quoted strings
+    case Const(l: Long) => super.quote(x).dropRight(1) //drop the "L" suffix
+    case _ => super.quote(x)
+  }
 
   /**
    * @param sym         the symbol representing the kernel
@@ -416,7 +419,7 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
    * @param antiDeps    a list of WAR dependencies (need to be committed in program order)
    */
 
-  def emitMultiLoop(id: String, outputs: List[Exp[Any]], resultIsVar: Boolean, inputs: List[Exp[Any]], inVars: List[Exp[Any]], mutableInputs: List[Exp[Any]], controlDeps: List[Exp[Any]], antiDeps: List[Exp[Any]], size: Exp[Int], needsCombine: Boolean, needsPostProcess: Boolean,
+  def emitMultiLoop(id: String, outputs: List[Exp[Any]], resultIsVar: Boolean, inputs: List[Exp[Any]], inVars: List[Exp[Any]], mutableInputs: List[Exp[Any]], controlDeps: List[Exp[Any]], antiDeps: List[Exp[Any]], size: Exp[Long], needsCombine: Boolean, needsPostProcess: Boolean,
                     sourceContext: Option[SourceContext], stencil: Stencil)
        (implicit supportedTgt: ListBuffer[String], returnTypes: ListBuffer[Pair[String, String]], outputSlotTypes: HashMap[String, ListBuffer[(String, String)]], metadata: ArrayBuffer[Pair[String,String]]) = {
    stream.println("{\"type\":\"MultiLoop\",")
@@ -471,8 +474,8 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
     emitSubGraph("then", thenp)
     emitSubGraph("else", elsep)
     stream.println("  \"condOutput\": \"" + quote(getBlockResult(cond)) + "\",")
-    stream.println("  \"thenOutput\": \"" + escape(quote(getBlockResult(thenp))) + "\",")
-    stream.println("  \"elseOutput\": \"" + escape(quote(getBlockResult(elsep))) + "\",")
+    stream.println("  \"thenOutput\": \"" + quote(getBlockResult(thenp)) + "\",")
+    stream.println("  \"elseOutput\": \"" + quote(getBlockResult(elsep)) + "\",")
     stream.println("  \"controlDeps\":[" + makeString(controlDeps) + "],")
     stream.println("  \"antiDeps\":[" + makeString(antiDeps) + "],")
     if (remap(thenp.tp) != remap(elsep.tp))
@@ -540,7 +543,7 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
 
   def emitConstOrSym(x: Exp[Any], prefix: String) = x match {
     case c:Const[Any] => stream.println("  \"" + prefix + "Type\": \"const\",")
-                         stream.println("  \"" + prefix + "Value\": \"" + escape(quote(x)) + "\"")
+                         stream.println("  \"" + prefix + "Value\": \"" + quote(x) + "\"")
     case s:Sym[Any] =>   stream.println("  \"" + prefix + "Type\": \"symbol\",")
                          stream.println("  \"" + prefix + "Value\": \"" + quote(getBlockResult(Block(x))) + "\"") // x might be a Reify
   }
@@ -553,7 +556,7 @@ trait DeliteGenTaskGraph extends DeliteCodegen with LoopFusionOpt with LoopSoAOp
 
   def emitSubGraph(prefix: String, e: Block[Any]) = e match {
     case Block(c:Const[Any]) => stream.println("  \"" + prefix + "Type\": \"const\",")
-                                stream.println("  \"" + prefix + "Value\": \"" + escape(quote(c)) + "\",")
+                                stream.println("  \"" + prefix + "Value\": \"" + quote(c) + "\",")
     case Block(s:Sym[Any]) =>  stream.println("  \"" + prefix + "Type\": \"symbol\",")
                         stream.println("  \"" + prefix + "Ops\": [")
                         val saveMutatingDeps = kernelMutatingDeps

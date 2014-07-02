@@ -8,8 +8,8 @@ object SortingImpl {
   /**
    * Generic index array sorting
    */
-  def sort(a: Array[Int], c: Comparator) = TimSort.sort(a,c)
-  def sort(a: Array[Int], lo: Int, hi: Int, c: Comparator) = TimSort.sort(a,lo,hi,c)
+  def sort(a: Array[Long], c: Comparator) = TimSort.sort(a,0,a.length,c,null,0,0)
+  def sort(a: Array[Long], lo: Int, hi: Int, c: Comparator) = TimSort.sort(a,lo,hi,c,null,0,0)
 
   /**
    * Specialized ascending order sorts for primitive types

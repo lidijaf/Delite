@@ -42,8 +42,8 @@ trait DeliteILOps extends Variables with StructOps with StructTags with DeliteAr
   
   // expose delite array stuff that is needed for buffer elems
   def darray_unsafe_set_act_buf[A:Manifest](da: Rep[DeliteArray[A]]): Rep[Unit]
-  def darray_unsafe_get_act_size(): Rep[Int]
-  def darray_unsafe_copy[T:Manifest](src: Rep[DeliteArray[T]], srcPos: Rep[Int], dest: Rep[DeliteArray[T]], destPos: Rep[Int], len: Rep[Int])(implicit ctx: SourceContext): Rep[Unit]
+  def darray_unsafe_get_act_size(): Rep[Long]
+  def darray_unsafe_copy[T:Manifest](src: Rep[DeliteArray[T]], srcPos: Rep[Long], dest: Rep[DeliteArray[T]], destPos: Rep[Long], len: Rep[Long])(implicit ctx: SourceContext): Rep[Unit]
   
   // expose struct method from StructExp for restaging
   def struct[T:Manifest](tag: StructTag[T], elems: (String, Rep[Any])*)(implicit o: Overloaded1, pos: SourceContext): Rep[T]
@@ -52,14 +52,14 @@ trait DeliteILOps extends Variables with StructOps with StructTags with DeliteAr
     
   // delite ops
   def collect[A:Manifest,I<:DeliteCollection[A]:Manifest,CA<:DeliteCollection[A]:Manifest]
-    (size: Rep[Int], allocN: Rep[Int] => Rep[I], func: (Rep[A], Rep[Int]) => Rep[A], update: (Rep[I],Rep[A],Rep[Int]) => Rep[Unit], finalizer: Rep[I] => Rep[CA],
-     cond: List[Rep[Int] => Rep[Boolean]], par: String, 
-     appendable: (Rep[I],Rep[A],Rep[Int]) => Rep[Boolean], append: (Rep[I],Rep[A],Rep[Int]) => Rep[Unit], setSize: (Rep[I],Rep[Int]) => Rep[Unit], allocRaw: (Rep[I],Rep[Int]) => Rep[I], copyRaw: (Rep[I],Rep[Int],Rep[I],Rep[Int],Rep[Int]) => Rep[Unit]
+    (size: Rep[Long], allocN: Rep[Long] => Rep[I], func: (Rep[A], Rep[Long]) => Rep[A], update: (Rep[I],Rep[A],Rep[Long]) => Rep[Unit], finalizer: Rep[I] => Rep[CA],
+     cond: List[Rep[Long] => Rep[Boolean]], par: String, 
+     appendable: (Rep[I],Rep[A],Rep[Long]) => Rep[Boolean], append: (Rep[I],Rep[A],Rep[Long]) => Rep[Unit], setSize: (Rep[I],Rep[Long]) => Rep[Unit], allocRaw: (Rep[I],Rep[Long]) => Rep[I], copyRaw: (Rep[I],Rep[Long],Rep[I],Rep[Long],Rep[Long]) => Rep[Unit]
     ): Rep[CA]
     
-  def foreach[A:Manifest](size: Rep[Int], func: Rep[Int] => Rep[Unit]): Rep[Unit]
+  def foreach[A:Manifest](size: Rep[Long], func: Rep[Long] => Rep[Unit]): Rep[Unit]
   
-  def reduce[A:Manifest](size: Rep[Int], func: Rep[Int] => Rep[A], cond: List[Rep[Int] => Rep[Boolean]], zero: => Rep[A], accInit: => Rep[A], rFunc: (Rep[A],Rep[A]) => Rep[A], stripFirst: Boolean): Rep[A]
+  def reduce[A:Manifest](size: Rep[Long], func: Rep[Long] => Rep[A], cond: List[Rep[Long] => Rep[Boolean]], zero: => Rep[A], accInit: => Rep[A], rFunc: (Rep[A],Rep[A]) => Rep[A], stripFirst: Boolean): Rep[A]
     
   def extern[A:Manifest](funcName: String, alloc: => Rep[A], inputs: List[Rep[Any]]): Rep[A]
   
@@ -83,9 +83,9 @@ trait DeliteILOpsExp extends DeliteILOps with DeliteOpsExp with DeliteArrayFatEx
   def setScopeResult(n: Rep[Any]) = reflectEffect(SetScopeResult(n))
   
   case class DeliteILCollect[A:Manifest,I<:DeliteCollection[A]:Manifest,CA<:DeliteCollection[A]:Manifest]
-    (size: Exp[Int], callocN: Exp[Int] => Exp[I], cfunc: (Exp[A], Exp[Int]) => Exp[A], cupdate: (Exp[I],Exp[A],Exp[Int]) => Exp[Unit], cfinalizer: Exp[I] => Exp[CA],
-     ccond: List[Exp[Int] => Exp[Boolean]], cpar: DeliteParallelStrategy, 
-     cappendable: (Exp[I],Exp[A],Exp[Int]) => Exp[Boolean], cappend: (Exp[I],Exp[A],Exp[Int]) => Exp[Unit], csetSize: (Exp[I],Exp[Int]) => Exp[Unit], callocRaw: (Exp[I],Exp[Int]) => Exp[I], ccopyRaw: (Exp[I],Exp[Int],Exp[I],Exp[Int],Exp[Int]) => Exp[Unit]
+    (size: Exp[Long], callocN: Exp[Long] => Exp[I], cfunc: (Exp[A], Exp[Long]) => Exp[A], cupdate: (Exp[I],Exp[A],Exp[Long]) => Exp[Unit], cfinalizer: Exp[I] => Exp[CA],
+     ccond: List[Exp[Long] => Exp[Boolean]], cpar: DeliteParallelStrategy, 
+     cappendable: (Exp[I],Exp[A],Exp[Long]) => Exp[Boolean], cappend: (Exp[I],Exp[A],Exp[Long]) => Exp[Unit], csetSize: (Exp[I],Exp[Long]) => Exp[Unit], callocRaw: (Exp[I],Exp[Long]) => Exp[I], ccopyRaw: (Exp[I],Exp[Long],Exp[I],Exp[Long],Exp[Long]) => Exp[Unit]
     ) extends DeliteOpMapLike[A,I,CA] {
     
           
@@ -120,9 +120,9 @@ trait DeliteILOpsExp extends DeliteILOps with DeliteOpsExp with DeliteArrayFatEx
   }
   
   def collect[A:Manifest,I<:DeliteCollection[A]:Manifest,CA<:DeliteCollection[A]:Manifest]
-    (size: Exp[Int], allocN: Exp[Int] => Exp[I], func: (Exp[A], Exp[Int]) => Exp[A], update: (Exp[I],Exp[A],Exp[Int]) => Exp[Unit], finalizer: Exp[I] => Exp[CA],
-     cond: List[Exp[Int] => Exp[Boolean]], par: String, 
-     appendable: (Exp[I],Exp[A],Exp[Int]) => Exp[Boolean], append: (Exp[I],Exp[A],Exp[Int]) => Exp[Unit], setSize: (Exp[I],Exp[Int]) => Exp[Unit], allocRaw: (Exp[I],Exp[Int]) => Exp[I], copyRaw: (Exp[I],Exp[Int],Exp[I],Exp[Int],Exp[Int]) => Exp[Unit]
+    (size: Exp[Long], allocN: Exp[Long] => Exp[I], func: (Exp[A], Exp[Long]) => Exp[A], update: (Exp[I],Exp[A],Exp[Long]) => Exp[Unit], finalizer: Exp[I] => Exp[CA],
+     cond: List[Exp[Long] => Exp[Boolean]], par: String, 
+     appendable: (Exp[I],Exp[A],Exp[Long]) => Exp[Boolean], append: (Exp[I],Exp[A],Exp[Long]) => Exp[Unit], setSize: (Exp[I],Exp[Long]) => Exp[Unit], allocRaw: (Exp[I],Exp[Long]) => Exp[I], copyRaw: (Exp[I],Exp[Long],Exp[I],Exp[Long],Exp[Long]) => Exp[Unit]
     ) = {
     
     val parStrategy = par match {
@@ -134,15 +134,15 @@ trait DeliteILOpsExp extends DeliteILOps with DeliteOpsExp with DeliteArrayFatEx
     // if we enclose it in a reify, we lose the manifest
     val save = context
     context = Nil      
-    //val a1 = reifyEffects(allocN(fresh[Int]))
-    val a1 = allocN(fresh[Int])
+    //val a1 = reifyEffects(allocN(fresh[Long]))
+    val a1 = allocN(fresh[Long])
     context = save
     val refTp = a1.tp
     val c = DeliteILCollect(size,allocN,func,update,finalizer,cond,parStrategy,appendable,append,setSize,allocRaw,copyRaw)(manifest[A],refTp,refTp.asInstanceOf[Manifest[CA]]) // HACK: forcing I and CA to be the same in order to retain RefinedManifest from I
     reflectEffect(c, summarizeEffects(c.body.asInstanceOf[DeliteCollectElem[_,_,_]].func).star)(refTp.asInstanceOf[Manifest[CA]],implicitly[SourceContext])
   }  
   
-  case class DeliteILForeach[A:Manifest](size: Exp[Int], ffunc: Exp[Int] => Exp[Unit]) extends DeliteOpLoop[Unit] {
+  case class DeliteILForeach[A:Manifest](size: Exp[Long], ffunc: Exp[Long] => Exp[Unit]) extends DeliteOpLoop[Unit] {
     lazy val body: Def[Unit] = copyBodyOrElse(DeliteForeachElem(
       func = reifyEffects(ffunc(v))   
     ))    
@@ -150,14 +150,14 @@ trait DeliteILOpsExp extends DeliteILOps with DeliteOpsExp with DeliteArrayFatEx
     val mA = manifest[A]
   }
   
-  def foreach[A:Manifest](size: Exp[Int], func: Exp[Int] => Exp[Unit]) = {
+  def foreach[A:Manifest](size: Exp[Long], func: Exp[Long] => Exp[Unit]) = {
     val f = DeliteILForeach(size,func)
     val u = summarizeEffects(f.body.asInstanceOf[DeliteForeachElem[A]].func).star
     reflectEffect(f, summarizeEffects(f.body.asInstanceOf[DeliteForeachElem[A]].func).star andAlso Simple()) // TODO: don't want Simple()
   }
   
   
-  case class DeliteILReduce[A:Manifest](size: Exp[Int], rfunc: Exp[Int] => Exp[A], rcond: List[Exp[Int] => Exp[Boolean]], rzero: () => Exp[A], raccInit: () => Exp[A], rrfunc: (Exp[A],Exp[A]) => Exp[A], rstripFirst: Boolean) extends DeliteOpReduceLike[A] {
+  case class DeliteILReduce[A:Manifest](size: Exp[Long], rfunc: Exp[Long] => Exp[A], rcond: List[Exp[Long] => Exp[Boolean]], rzero: () => Exp[A], raccInit: () => Exp[A], rrfunc: (Exp[A],Exp[A]) => Exp[A], rstripFirst: Boolean) extends DeliteOpReduceLike[A] {
     lazy val body: Def[A] = copyBodyOrElse(DeliteReduceElem[A](
       func = reifyEffects(rfunc(v)),
       cond = rcond.map(cf => reifyEffects(cf(v))),
@@ -171,7 +171,7 @@ trait DeliteILOpsExp extends DeliteILOps with DeliteOpsExp with DeliteArrayFatEx
     val mA = manifest[A]
   }
 
-  def reduce[A:Manifest](size: Exp[Int], func: Exp[Int] => Exp[A], cond: List[Exp[Int] => Exp[Boolean]], zero: => Exp[A], accInit: => Exp[A], rFunc: (Exp[A],Exp[A]) => Exp[A], stripFirst: Boolean): Rep[A] = {
+  def reduce[A:Manifest](size: Exp[Long], func: Exp[Long] => Exp[A], cond: List[Exp[Long] => Exp[Boolean]], zero: => Exp[A], accInit: => Exp[A], rFunc: (Exp[A],Exp[A]) => Exp[A], stripFirst: Boolean): Rep[A] = {
     val f = DeliteILReduce(size,func,cond,() => zero,() => accInit,rFunc,stripFirst)
     reflectEffect(f, summarizeEffects(f.body.asInstanceOf[DeliteReduceElem[A]].func).star)
   }

@@ -5,10 +5,10 @@ import scala.collection.mutable.HashMap
 
 object Table {
 
-  def printAsTable(table: AnyRef, maxRows: Int = 0) {
+  def printAsTable(table: AnyRef, maxRows: Int) {
 
     implicit val tableStr = new StringBuilder
-    val numRows = math.min(table.getClass.getMethod("size").invoke(table).asInstanceOf[Integer].intValue, maxRows)
+    val numRows = math.min(table.getClass.getMethod("size").invoke(table).asInstanceOf[Long], maxRows).toInt
     val data = table.getClass.getMethod("data").invoke(table)
     val columnStrings = if (data.isInstanceOf[Array[_]]) getCaseClassFields(data.asInstanceOf[Array[_]](0).getClass) else getCaseClassFields(data.getClass)
     val columnSizes = getTableColSizes(data, columnStrings, numRows)

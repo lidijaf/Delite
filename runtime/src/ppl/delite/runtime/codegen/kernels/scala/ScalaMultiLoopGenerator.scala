@@ -54,10 +54,10 @@ class ScalaMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, va
 
   //TODO: is the division logic really target dependent?
   protected def calculateRange(): (String,String) = {
-    out.append("val startOffset = "+closure+".loopStart\n")
+    out.append("val startOffset: Long = "+closure+".loopStart\n")
     out.append("val size: Long = "+closure+".loopSize\n")
-    out.append("val start: Int = (startOffset + size*"+chunkIdx+"/"+numChunks+").asInstanceOf[Int]\n")
-    out.append("val end: Int = (startOffset + size*"+(chunkIdx+1)+"/"+numChunks+").asInstanceOf[Int]\n")
+    out.append("val start: Long = (startOffset + size*"+chunkIdx+"/"+numChunks+")\n")
+    out.append("val end: Long = (startOffset + size*"+(chunkIdx+1)+"/"+numChunks+")\n")
     ("start","end")
   }
 

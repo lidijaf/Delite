@@ -116,7 +116,7 @@ trait DeliteGPUReferencePrimitive1 extends DeliteTestModule with DeliteTestDSLAp
     val v = DeliteArrayBuffer.fromFunction(10)(i => 1).mutable
 
     val result = if(v(0) < 2) {
-      v forIndices { i => v(i) = i }
+      v forIndices { i => v(i) = i.toInt }
       v.reduce(_ + _)(0) // returned by GPU (returner), and is referential primitive
     }
     else {

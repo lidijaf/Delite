@@ -26,9 +26,9 @@ trait ForeachReduceTransformExp extends DeliteTransform
   /**
    * These IR nodes represent the spliced out components of the DeliteOpForeachReduce after transformation.
    */
-  case class TransformedForeach(size: Exp[Int], func: Exp[Int] => Exp[Unit]) extends DeliteOpIndexedLoop 
+  case class TransformedForeach(size: Exp[Long], func: Exp[Long] => Exp[Unit]) extends DeliteOpIndexedLoop 
   
-  case class TransformedReduce[R:Manifest](oldV: Sym[Int], size: Exp[Int], zero: Block[R], rhs: Block[R], rFunc: (Exp[R],Exp[R]) => Exp[R]) extends DeliteOpReduceLike[R] {
+  case class TransformedReduce[R:Manifest](oldV: Sym[Long], size: Exp[Long], zero: Block[R], rhs: Block[R], rFunc: (Exp[R],Exp[R]) => Exp[R]) extends DeliteOpReduceLike[R] {
     lazy val body: Def[R] = copyBodyOrElse(DeliteReduceElem[R](
       func = t.withSubstScope((oldV -> v)) { t.transformBlock(this.rhs) },
       accInit = reifyEffects(this.accInit),
@@ -88,7 +88,7 @@ trait ForeachReduceTransformExp extends DeliteTransform
     case e@TransformedReduce(v,s,z,rhs,r) => 
       e.asInstanceOf[TransformedReduce[A]] match {
         case e@TransformedReduce(v,s,z,rhs,r) => 
-          reflectPure(new { override val original = Some(f,e) } with TransformedReduce(f(v).asInstanceOf[Sym[Int]],f(s),f(z),f(rhs),f(r))(e.mR))(mtype(manifest[A]),implicitly[SourceContext])
+          reflectPure(new { override val original = Some(f,e) } with TransformedReduce(f(v).asInstanceOf[Sym[Long]],f(s),f(z),f(rhs),f(r))(e.mR))(mtype(manifest[A]),implicitly[SourceContext])
       }
     
     // reflected
@@ -96,7 +96,7 @@ trait ForeachReduceTransformExp extends DeliteTransform
     case Reflect(e@TransformedReduce(v,s,z,rhs,r), u, es) => 
       e.asInstanceOf[TransformedReduce[A]] match {
         case e@TransformedReduce(v,s,z,rhs,r) => 
-          reflectMirrored(Reflect(new { override val original = Some(f,e) } with TransformedReduce(f(v).asInstanceOf[Sym[Int]],f(s),f(z),f(rhs),f(r))(e.mR), mapOver(f,u), f(es)))(mtype(manifest[A]), ctx)
+          reflectMirrored(Reflect(new { override val original = Some(f,e) } with TransformedReduce(f(v).asInstanceOf[Sym[Long]],f(s),f(z),f(rhs),f(r))(e.mR), mapOver(f,u), f(es)))(mtype(manifest[A]), ctx)
       }
     
     case _ => super.mirror(e,f)

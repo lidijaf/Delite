@@ -64,7 +64,7 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
   }
 
   //collect elems: unwrap outer struct if return type is a Struct && perform SoA transform if element type is a Struct
-  def soaCollect[A:Manifest, I<:DeliteCollection[A]:Manifest, CA<:DeliteCollection[A]:Manifest](size: Exp[Int], v: Sym[Int], body: DeliteCollectElem[A,I,CA]): Option[Exp[CA]] = {
+  def soaCollect[A:Manifest, I<:DeliteCollection[A]:Manifest, CA<:DeliteCollection[A]:Manifest](size: Exp[Long], v: Sym[Long], body: DeliteCollectElem[A,I,CA]): Option[Exp[CA]] = {
     val alloc = t(body.buf.alloc)
     alloc match {
     case StructBlock(tag,elems) =>
@@ -75,11 +75,11 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
         case _ =>
           val allocV = reflectMutableSym(fresh[DeliteArray[B]])
           val elemV = fresh[B]
-          val sizeV = fresh[Int]
+          val sizeV = fresh[Long]
           val buf_aV = fresh[DeliteArray[B]]
-          val buf_iV = fresh[Int]
-          val buf_iV2 = fresh[Int]
-          val tv = t(v).asInstanceOf[Sym[Int]]
+          val buf_iV = fresh[Long]
+          val buf_iV2 = fresh[Long]
+          val tv = t(v).asInstanceOf[Sym[Long]]
           simpleLoop(t(size), tv, DeliteCollectElem[B,DeliteArray[B],DeliteArray[B]](
             func = f,
             cond = condT,
@@ -115,10 +115,10 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
 
           newElems(0)._2.length //TODO: we want to know the output size without having to pick one of the returned arrays arbitrarily (prevents potential DCE)... can we just grab the size out of the activation record somehow?
           /* //determine output size by counting:
-          val rV1 = fresh[Int]
-          val rV2 = fresh[Int]
+          val rV1 = fresh[Long]
+          val rV2 = fresh[Long]
 
-          simpleLoop(t(size), t(v).asInstanceOf[Sym[Int]], DeliteReduceElem[Int](
+          simpleLoop(t(size), t(v).asInstanceOf[Sym[Long]], DeliteReduceElem[Long](
             func = reifyEffects(unit(1)),
             cond = condT,
             zero = reifyEffects(unit(0)),
@@ -182,10 +182,10 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
   
   
   //reduce elems: unwrap result if elem is a Struct
-  def soaReduce[A:Manifest](size: Exp[Int], v: Sym[Int], body: DeliteReduceElem[A]): Option[Exp[A]] = t(body.func) match {
+  def soaReduce[A:Manifest](size: Exp[Long], v: Sym[Long], body: DeliteReduceElem[A]): Option[Exp[A]] = t(body.func) match {
     case StructBlock(tag,elems) =>       
       def copyLoop[B:Manifest](f: Block[B], r: Block[B], z: Block[B], rv1: Exp[B], rv2: Exp[B]): Exp[B] = {
-        simpleLoop(t(size), t(v).asInstanceOf[Sym[Int]], DeliteReduceElem[B](
+        simpleLoop(t(size), t(v).asInstanceOf[Sym[Long]], DeliteReduceElem[B](
           func = f,
           cond = body.cond.map(t(_)),
           zero = z,
@@ -246,20 +246,20 @@ trait MultiloopSoATransformExp extends DeliteTransform with LoweringTransform wi
 
 
   //hash reduce elems: similar to reduce elems; we only transform the values, not the keys
-  def soaHashReduce[K:Manifest,V:Manifest,I:Manifest,CV:Manifest](size: Exp[Int], v: Sym[Int], body: DeliteHashReduceElem[K,V,I,CV]): Option[Exp[CV]] = {
+  def soaHashReduce[K:Manifest,V:Manifest,I:Manifest,CV:Manifest](size: Exp[Long], v: Sym[Long], body: DeliteHashReduceElem[K,V,I,CV]): Option[Exp[CV]] = {
     val alloc = t(body.buf.alloc) 
     alloc match {
     case StructBlock(tag,elems) =>
       val condT = body.cond.map(t(_))
       val keyT = t(body.keyFunc)
       val valT = t(body.valFunc)
-      val tv = t(v).asInstanceOf[Sym[Int]]
+      val tv = t(v).asInstanceOf[Sym[Long]]
       val sizeT = t(size)
 
       def copyLoop[B:Manifest](f: Block[B], r: Block[B], z: Block[B], rv1: Exp[B], rv2: Exp[B]): Exp[DeliteArray[B]] = {
         val allocV = reflectMutableSym(fresh[DeliteArray[B]])
-        val indexV = fresh[Int]
-        val sizeV = fresh[Int]
+        val indexV = fresh[Long]
+        val sizeV = fresh[Long]
         val elemV = fresh[B]
         simpleLoop(sizeT, tv, DeliteHashReduceElem[K,B,DeliteArray[B],DeliteArray[B]](
           keyFunc = keyT,
