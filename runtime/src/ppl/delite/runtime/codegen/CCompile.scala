@@ -83,11 +83,10 @@ trait CCompile extends CodeCache {
     kernelBuffer.clear()
   }
 
-  def compileInit() {
-    val root = staticResources + sep + target + "Init."
-    val source = root + ext
-    val dest = root + OS.libExt
-    compile(dest, Array(source), config.headerDir, Array[String]())
+  def compileInit(root: String) {
+    val source = root + "." + ext
+    val dest = root + "." + OS.libExt
+    compile(dest, Array(source), config.headerDir, Array())
   }
 
   // emit Makefile and call make

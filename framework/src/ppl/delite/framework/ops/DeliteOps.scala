@@ -12,7 +12,6 @@ import ppl.delite.framework.transform.LoopSoAOpt
 import ppl.delite.framework.analysis.{StencilExp,NestedLoopMappingExp}
 import scala.collection.mutable.{HashSet,HashMap}
 
-//trait DeliteOpsExp extends BaseFatExp with EffectExp with VariablesExp with LoopsFatExp {
 trait DeliteOpsExp extends BaseFatExp with EffectExp with VariablesExp with LoopsFatExp with FunctionBlocksExp with IfThenElseFatExp
     with PrimitiveOpsExp with DeliteCollectionOpsExp with DeliteReductionOpsExp with DeliteMapOpsExp with DeliteArrayFatExp with StencilExp
     with OrderingOpsExp with EqualExpBridge with CastingOpsExp with ImplicitOpsExp with WhileExp with StaticDataExp with NestedLoopMappingExp {
@@ -329,6 +328,7 @@ trait DeliteOpsExp extends BaseFatExp with EffectExp with VariablesExp with Loop
     val cond: Block[Boolean]
     val body: Block[Unit]
   }
+
 
   /**
    *  Delite parallel ops - represents common parallel execution patterns, most of which
@@ -806,9 +806,14 @@ trait DeliteOpsExp extends BaseFatExp with EffectExp with VariablesExp with Loop
 
     final lazy val i: Sym[Long] = copyOrElse(_.i)(fresh[Long])
     lazy val body: Def[Unit] = copyBodyOrElse(DeliteForeachElem(
-      func = reifyEffects(this.func(dc_apply(in,v))),
+      // using "here" effects retains dependencies that are lost when fattening an effectful loop in Loops.scala
+      // the outer Reflect(..) wrapper is effectively discarded w.r.t. syms, and forwarded to the inner body
+      //
+      // NOTE: with sequential semantics, using 'here' can introduce problems -- write x; loop { read x, write x }
+      // could short-circuit the inner read to the outer write. however, read/write within a single iteration doesn't
+      // make much sense in parallel anyways.
+      func = reifyEffectsHere(this.func(dc_apply(in,v))),
       numDynamicChunks = this.numDynamicChunks
-      //sync = reifyEffects(this.sync(i))
     ))
   }
 
@@ -1483,14 +1488,6 @@ trait BaseDeliteOpsTraversalFat extends BaseLoopsTraversalFat {
     }
   */
 
-  /*
-    // TODO: can implement generically? or need override for VectorSize and all others?
-    override def unapplySimpleDomain(e: Def[Long]): Option[Exp[Any]] = e match {
-      case ArrayLength(a) => Some(a)
-      case _ => super.unapplySimpleDomain(e)
-    }
-  */
-
   override def unapplySimpleCollect(e: Def[Any]) = e match {
     case e: DeliteCollectElem[_,_,_] if e.cond.isEmpty => Some(e.func.res)
     case _ => super.unapplySimpleCollect(e)
@@ -1512,6 +1509,11 @@ trait BaseDeliteOpsTraversalFat extends BaseLoopsTraversalFat {
     case e: DeliteReduceElem[_] => e.copy(cond = e.cond ++ c.map(Block(_)))(e.mA)
     case e: DeliteReduceTupleElem[_,_] => e.copy(cond = e.cond ++ c.map(Block(_)))(e.mA,e.mB)
     case _ => super.applyAddCondition(e,c)
+  }
+
+  override def canApplyAddCondition(e: Def[Any]): Boolean = e match {
+    case e: DeliteForeachElem[_] => false
+    case _ => super.canApplyAddCondition(e)
   }
 
   override def shouldApplyFusion(currentScope: List[Stm])(result: List[Exp[Any]]) = Config.opfusionEnabled
@@ -1604,13 +1606,12 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
 
   def emitKernelMultiHashDecl(op: AbstractFatLoop, ps: List[(Sym[Any], DeliteHashElem[_,_])], actType: String) {
     if (ps.length > 0) {
-      emitFieldDecl("tid", remap(Manifest.Int))
       emitFieldDecl("all_acts", "Array["+actType+"]")
       for ((cond,cps) <- ps.groupBy(_._2.cond)) {
         for ((key,kps) <- cps.groupBy(_._2.keyFunc)) {
           val quotedGroup = kps.map(p=>quote(p._1)).mkString("")
           emitFieldDecl(quotedGroup + "_hash_pos", "generated.scala.container.HashMapImpl[" + remap(getBlockResult(key).tp) + "]")
-          emitFieldDecl(quotedGroup + "_size", remap(Manifest.Long))
+          emitFieldDecl(quotedGroup + "_size", remap(Manifest.Int))
           kps foreach {
             case (sym, elem: DeliteHashCollectElem[_,_,_,_,_,_]) =>
               emitFieldDecl(quote(sym), remap(sym.tp))
@@ -1659,8 +1660,8 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
         for ((key,kps) <- cps.groupBy(_._2.keyFunc)) { // group by key
           val quotedGroup = kps.map(p=>quote(p._1)).mkString("")
           stream.println("// common key "+key+" for "+quotedGroup)
-          emitValDef(quotedGroup + "_sze", remap(manifest[Long]), fieldAccess(fieldAccess(prefixSym, quotedGroup + "_hash_pos"), "size"))
-          emitValDef(quotedGroup + "_idx", remap(manifest[Long]), fieldAccess(fieldAccess(prefixSym, quotedGroup + "_hash_pos"), "put(" + quote(getBlockResult(key)) + ")"))
+          emitValDef(quotedGroup + "_sze", remap(manifest[Int]), fieldAccess(fieldAccess(prefixSym, quotedGroup + "_hash_pos"), "size"))
+          emitValDef(quotedGroup + "_idx", remap(manifest[Int]), fieldAccess(fieldAccess(prefixSym, quotedGroup + "_hash_pos"), "put(" + quote(getBlockResult(key)) + ")"))
 
           stream.println("if (" + quotedGroup + "_idx == " + quotedGroup + "_sze) { // new key")
           kps foreach {
@@ -1732,11 +1733,11 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
         emitAssignment(fieldAccess(prefixSym, quotedGroup + "_size"), fieldAccess(prefixSym, quotedGroup+"_hash_pos.size"))
         stream.print("if (" + fieldAccess("rhs", quotedGroup+"_size") + " == -1) ")
         emitAssignment(fieldAccess("rhs", quotedGroup+"_size"), fieldAccess("rhs", quotedGroup+"_hash_pos.size"))
-        emitVarDef(quotedGroup + "rhs_idx", remap(manifest[Long]), "0")
+        emitVarDef(quotedGroup + "rhs_idx", remap(manifest[Int]), "0")
         stream.println("while (" + quotedGroup + "rhs_idx < rhs." + quotedGroup + "_hash_pos.size) {")
-        emitValDef(quotedGroup + "_k", remap(key.tp), "rhs." + quotedGroup + "_hash_pos.unsafeKeys(" + quotedGroup + "rhs_idx.asInstanceOf[Int])")
-        emitValDef(quotedGroup + "_sze", remap(manifest[Long]), fieldAccess(prefixSym, quotedGroup + "_hash_pos.size"))
-        emitValDef(quotedGroup + "_idx", remap(manifest[Long]), fieldAccess(prefixSym, quotedGroup + "_hash_pos.put("+quotedGroup+"_k)"))
+        emitValDef(quotedGroup + "_k", remap(key.tp), "rhs." + quotedGroup + "_hash_pos.unsafeKeys(" + quotedGroup + "rhs_idx)")
+        emitValDef(quotedGroup + "_sze", remap(manifest[Int]), fieldAccess(prefixSym, quotedGroup + "_hash_pos.size"))
+        emitValDef(quotedGroup + "_idx", remap(manifest[Int]), fieldAccess(prefixSym, quotedGroup + "_hash_pos.put("+quotedGroup+"_k)"))
         stream.println("if (" + quotedGroup + "_idx == " + quotedGroup + "_sze) { // new key")
         kps foreach {
           case (sym, elem: DeliteHashCollectElem[_,_,_,_,_,_]) =>
@@ -1785,17 +1786,14 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     }
   }
 
-  def emitMultiHashPostCombine(op: AbstractFatLoop, ps: List[(Sym[Any], DeliteHashElem[_,_])], prefixSym: String){
-    if (ps.length > 0) 
-      emitAssignment(fieldAccess(prefixSym, "tid"),fieldAccess("lhs", "tid") + " + 1")
-  }
+  def emitMultiHashPostCombine(op: AbstractFatLoop, ps: List[(Sym[Any], DeliteHashElem[_,_])], prefixSym: String){ }
 
   def emitMultiHashPostProcInit(op: AbstractFatLoop, ps: List[(Sym[Any], DeliteHashElem[_,_])], actType: String, prefixSym: String){
     if (ps.length > 0) {
-      stream.println("if (" + fieldAccess(prefixSym,"tid") + " > 0) {")
-      emitValDef("all_acts", "Array["+actType+"]", "new Array["+actType+"](" + fieldAccess(prefixSym,"tid") + " + 1)")
+      stream.println("if (tid > 0) {")
+      emitValDef("all_acts", "Array["+actType+"]", "new Array["+actType+"](tid + 1)")
       emitVarDef("currentAct", actType, prefixSym)
-      emitVarDef("i", remap(Manifest.Int), fieldAccess(prefixSym,"tid"))
+      emitVarDef("i", remap(Manifest.Int), "tid")
       stream.println("while(i >= 0) {")
       emitAssignment("all_acts(i)", "currentAct")
       emitAssignment(fieldAccess("currentAct","all_acts"), "all_acts")
@@ -1841,8 +1839,8 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
         for ((key,kps) <- cps.groupBy(_._2.keyFunc)) {
           val quotedGroup = kps.map(p=>quote(p._1)).mkString("")
           emitValDef(quotedGroup+"_globalKeys", "Array["+remap(key.tp)+"]", fieldAccess(fieldAccess(fieldAccess(prefixSym, "all_acts(0)"), quotedGroup+"_hash_pos"), "unsafeKeys"))
-          emitVarDef(quotedGroup+"_idx", remap(Manifest.Long), "("+fieldAccess(fieldAccess(fieldAccess(prefixSym, "all_acts(0)"), quotedGroup+"_hash_pos"), "size")+ ".toLong * " + fieldAccess(prefixSym,"tid") + " / " + fieldAccess("all_acts","length")+")")
-          emitValDef(quotedGroup+"_end", remap(Manifest.Long), "("+fieldAccess(fieldAccess(fieldAccess(prefixSym, "all_acts(0)"), quotedGroup+"_hash_pos"), "size") + ".toLong * (" + fieldAccess(prefixSym,"tid") + "+1) / " + fieldAccess("all_acts","length")+")")
+          emitVarDef(quotedGroup+"_idx", remap(Manifest.Int), "("+fieldAccess(fieldAccess(fieldAccess(prefixSym, "all_acts(0)"), quotedGroup+"_hash_pos"), "size")+ ".toLong * tid / " + fieldAccess("all_acts","length")+").toInt")
+          emitValDef(quotedGroup+"_end", remap(Manifest.Int), "("+fieldAccess(fieldAccess(fieldAccess(prefixSym, "all_acts(0)"), quotedGroup+"_hash_pos"), "size") + ".toLong * (tid+1) / " + fieldAccess("all_acts","length")+").toInt")
           stream.println("while (" + quotedGroup+"_idx < " + quotedGroup + "_end) {")
           kps foreach {
             case (sym, elem: DeliteHashCollectElem[_,_,_,_,_,_]) =>
@@ -1852,7 +1850,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
                 emitVarDef(quote(sym)+"_values_size", remap(Manifest.Long), "0")
                 stream.println("while (" + quote(sym)+"_act_idx < " + fieldAccess("all_acts","length") + ") {")
                   emitValDef("currentAct", actType, "all_acts("+quote(sym)+"_act_idx)")
-                  emitValDef("pos", remap(Manifest.Long), fieldAccess(fieldAccess("currentAct", quotedGroup+"_hash_pos"), "get("+quotedGroup+"_globalKeys("+quotedGroup+"_idx.asInstanceOf[Int]))"))
+                  emitValDef("pos", remap(Manifest.Int), fieldAccess(fieldAccess("currentAct", quotedGroup+"_hash_pos"), "get("+quotedGroup+"_globalKeys("+quotedGroup+"_idx))"))
                   stream.println("if (pos != -1 && pos < " + fieldAccess("currentAct",quotedGroup+"_size") + ") {")
                     emitValDef(elem.buf.iV2, "pos")
                     emitValDef(elem.buf.aV2, fieldAccess("currentAct",quote(sym)+"_hash_data"))
@@ -1877,7 +1875,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
                 emitAssignment(quote(sym)+"_act_idx", "0")
                 stream.println("while (" + quote(sym)+"_act_idx < " + fieldAccess("all_acts","length") + ") {")
                   emitValDef("currentAct", actType, "all_acts("+quote(sym)+"_act_idx)")
-                  emitValDef("pos", remap(Manifest.Long), fieldAccess(fieldAccess("currentAct", quotedGroup+"_hash_pos"), "get("+quotedGroup+"_globalKeys("+quotedGroup+"_idx.asInstanceOf[Int]))"))
+                  emitValDef("pos", remap(Manifest.Int), fieldAccess(fieldAccess("currentAct", quotedGroup+"_hash_pos"), "get("+quotedGroup+"_globalKeys("+quotedGroup+"_idx))"))
                   stream.println("if (pos != -1 && pos < " + fieldAccess("currentAct",quotedGroup+"_size") + ") {")
                     emitValDef(elem.buf.iV2, "pos")
                     emitValDef(elem.buf.aV2, fieldAccess("currentAct",quote(sym)+"_hash_data"))
@@ -1909,7 +1907,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     for ((cond,cps) <- ps.groupBy(_._2.cond)) {
       for ((key,kps) <- cps.groupBy(_._2.keyFunc)) {
         val quotedGroup = kps.map(p=>quote(p._1)).mkString("")
-        emitValDef(quotedGroup + "_sze", remap(manifest[Long]), fieldAccess(fieldAccess(prefixSym, quotedGroup + "_hash_pos"), "size"))
+        emitValDef(quotedGroup + "_sze", remap(manifest[Int]), fieldAccess(fieldAccess(prefixSym, quotedGroup + "_hash_pos"), "size"))
         kps foreach {
           case (sym, elem: DeliteHashCollectElem[_,_,_,_,_,_]) => //TODO: finalizer
             if (prefixSym == "") {
@@ -2278,7 +2276,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     }}
 
     // processRange
-    emitMethod("processRange", actType, List(("__act",actType),("start",remap(Manifest.Long)),("end",remap(Manifest.Long)))) {
+    emitMethod("processRange", actType, List(("__act",actType),("start",remap(Manifest.Long)),("end",remap(Manifest.Long)),("tid",remap(Manifest.Int)))) {
       //GROSS HACK ALERT!
       val freeVars = getFreeVarBlock(Block(Combine(getMultiLoopFuncs(op,symList).map(getBlockResultFull))),List(op.v)).filter(_ != op.size).distinct
       val streamVars = freeVars.filter(_.tp == manifest[DeliteFileStream])
@@ -2287,18 +2285,18 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
         val streamSym = quote(streamVars(0))+"_stream"
         emitValDef(streamSym, remap(streamVars(0).tp), fieldAccess(quote(streamVars(0)),"openCopyAtNewLine(start)"))
         emitValDef("isEmpty",remap(Manifest.Boolean), "end - " + fieldAccess(streamSym,"position") + " <= 0")
-        emitValDef("__act2",actType,"init(__act,start,isEmpty,"+streamSym+")")
+        emitValDef("__act2",actType,"init(__act,start,isEmpty,tid,"+streamSym+")")
         stream.println("while (" + fieldAccess(streamSym,"position") + " < end) {")
-        emitMethodCall("process",List("__act2","start",streamSym))
+        emitMethodCall("process",List("__act2","start","tid",streamSym))
         stream.println("}")
         stream.println(fieldAccess(streamSym,"close()"))
       }
       else {
         emitValDef("isEmpty",remap(Manifest.Boolean),"end-start <= 0")
-        emitValDef("__act2",actType,"init(__act,start,isEmpty)") // TODO: change to use method call
+        emitValDef("__act2",actType,"init(__act,start,isEmpty,tid)") // TODO: change to use method call
         emitVarDef("idx", remap(Manifest.Long), "start + 1")
         stream.println("while (idx < end) {")
-        emitMethodCall("process",List("__act2","idx"))
+        emitMethodCall("process",List("__act2","idx","tid"))
         emitAssignment("idx","idx + 1")
         stream.println("}")
       }
@@ -2306,7 +2304,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     }
 
     // init and compute first element
-    emitMethod("init", actType, List(("__act",actType),(quote(op.v),remap(op.v.tp)),("isEmpty",remap(Manifest.Boolean)))++extraArgs) {
+    emitMethod("init", actType, List(("__act",actType),(quote(op.v),remap(op.v.tp)),("isEmpty",remap(Manifest.Boolean)),("tid",remap(Manifest.Int)))++extraArgs) {
       if (op.body exists (b => loopBodyNeedsCombine(b) || loopBodyNeedsPostProcess(b))) {
         emitNewInstance("__act2", actType)
         emitKernelMultiHashInit(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, "__act2")
@@ -2366,13 +2364,13 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
         emitReturn("__act2")
       } else {
         stream.println("if (!isEmpty) {")
-        emitMethodCall("process", List("__act",quote(op.v)))
+        emitMethodCall("process", List("__act",quote(op.v),"tid"))
         stream.println("}")
         emitReturn("__act")
       }
     }
 
-    emitMethod("process", remap(Manifest.Unit), List(("__act",actType),(quote(op.v),remap(op.v.tp)))++extraArgs) {
+    emitMethod("process", remap(Manifest.Unit), List(("__act",actType),(quote(op.v),remap(op.v.tp)),("tid",remap(Manifest.Int)))++extraArgs) {
       emitMultiLoopFuncs(op, symList)
       emitMultiHashElem(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, "__act")
       (symList zip op.body) foreach {
@@ -2389,7 +2387,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
       }
     }
 
-    emitMethod("combine", remap(Manifest.Unit), List(("__act",actType),("rhs",actType))) {
+    emitMethod("combine", remap(Manifest.Unit), List(("__act",actType),("rhs",actType),("tid",remap(Manifest.Int)))) {
       emitMultiHashCombine(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, "__act")
       (symList zip op.body) foreach {
         case (sym, elem: DeliteCollectElem[_,_,_]) =>
@@ -2426,8 +2424,8 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     }
     // scan/postprocess follows
 
-    emitMethod("postCombine", remap(Manifest.Unit), List(("__act",actType),("lhs",actType))) {
-      emitMultiHashPostCombine(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, "__act")
+    emitMethod("postCombine", remap(Manifest.Unit), List(("__act",actType),("lhs",actType),("tid",remap(Manifest.Int)))) {
+      //emitMultiHashPostCombine(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, "__act")
       (symList zip op.body) foreach {
         case (sym, elem: DeliteCollectElem[_,_,_]) =>
           if (elem.par == ParBuffer || elem.par == ParSimpleBuffer) {
@@ -2443,7 +2441,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
       emitAssignment(fieldAccess("__act","left_act"), "lhs")
     }
 
-    emitMethod("postProcInit", remap(Manifest.Unit), List(("__act",actType))) { // only called for last chunk!!
+    emitMethod("postProcInit", remap(Manifest.Unit), List(("__act",actType),("tid",remap(Manifest.Int)))) { // only called for last chunk!!
       emitMultiHashPostProcInit(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, actType, "__act")
       (symList zip op.body) foreach {
         case (sym, elem: DeliteCollectElem[_,_,_]) =>
@@ -2464,7 +2462,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
       }
     }
 
-    emitMethod("postProcess", remap(Manifest.Unit), List(("__act",actType))) {
+    emitMethod("postProcess", remap(Manifest.Unit), List(("__act",actType),("tid",remap(Manifest.Int)))) {
       emitMultiHashPostProcess(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, actType, "__act")
       (symList zip op.body) foreach {
         case (sym, elem: DeliteCollectElem[_,_,_]) =>
@@ -2487,7 +2485,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
       }
     }
 
-    emitMethod("finalize", remap(Manifest.Unit), List(("__act",actType))) {
+    emitMethod("finalize", remap(Manifest.Unit), List(("__act",actType),("tid",remap(Manifest.Int)))) {
       emitMultiHashFinalize(op, (symList zip op.body) collect { case (sym, elem: DeliteHashElem[_,_]) => (sym,elem) }, "__act")
       (symList zip op.body) foreach {
         case (sym, elem: DeliteCollectElem[_,_,_]) =>
@@ -4082,6 +4080,7 @@ trait CGenDeliteOps extends CGenLoopsFat with GenericGenDeliteOps {
     stream.println("#ifndef __" + name + "__")
     stream.println("#define __" + name + "__")
     stream.println("#include \"" + deviceTarget + "helperFuncs.h\"")
+    stream.println("#include \"Config.h\"")
     stream.println("class " + name + " {")
     stream.println("public:")
     body

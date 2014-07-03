@@ -14,9 +14,9 @@ import org.apache.hadoop.io.Text
 
 object FileStreamImpl {
 
-  def apply(paths: String*): FileStreamImpl = FileStreamImpl(Charset.defaultCharset, paths:_*)
-  def apply(charset: Charset, paths: String*): FileStreamImpl = new FileStreamImpl(checkCharset(charset), null, getFiles(paths))
-  def apply(delimiter: Array[Byte], paths: String*): FileStreamImpl = new FileStreamImpl(null, delimiter, getFiles(paths))
+  def apply(paths: Seq[String]): FileStreamImpl = FileStreamImpl(null, paths)
+  def apply(charset: String, paths: Seq[String]): FileStreamImpl = new FileStreamImpl(checkCharset(charset), null, getFiles(paths))
+  def bytes(delimiter: Array[Byte], paths: Seq[String]): FileStreamImpl = new FileStreamImpl(null, delimiter, getFiles(paths))
 
   private def getFiles(paths:Seq[String]) = paths.toArray flatMap { path =>
     val jPath = new File(path)
@@ -29,7 +29,8 @@ object FileStreamImpl {
     else throw new IllegalArgumentException("Path " + path + " does not appear to be a valid file or directory")
   }
 
-  private def checkCharset(charset: Charset) = {
+  private def checkCharset(charsetName: String) = {
+    val charset = if (charsetName eq null) Charset.defaultCharset else Charset.forName(charsetName)
     val dec = charset.newDecoder
     if (dec.maxCharsPerByte != 1f || dec.averageCharsPerByte != 1f)
       throw new IOException("Unsupported Charset: " + charset.displayName)

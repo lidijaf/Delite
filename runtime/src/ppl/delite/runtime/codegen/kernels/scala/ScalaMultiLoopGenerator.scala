@@ -54,7 +54,8 @@ class ScalaMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, va
     out.append(result+"\n")
   }
 
-  protected def dynamicScheduler(outputSym: String): String = {
+  protected def processLocal(outputSym: String): String = {
+    out.append("val tid = "+chunkIdx+"\n")
     out.append("var dIdx = "+chunkIdx+"\n")
     out.append("val numDynamicChunks = "+headerObject + ".numDynamicChunks\n")
     out.append("val startOffset = "+closure+".loopStart\n")
@@ -63,7 +64,7 @@ class ScalaMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, va
     out.append("val start: Long = (startOffset + size*dIdx/numDynamicChunks)\n")
     out.append("val end: Long = (startOffset + size*(dIdx+1)/numDynamicChunks)\n")  
     //out.append("println(\"start: \" + start + \" end: \" +end + \" loopSize: \" + "+closure+".loopSize)\n")
-    out.append("val accDynamic = "+closure+".processRange("+outputSym+",start,end)\n")
+    out.append("val accDynamic = "+closure+".processRange("+outputSym+",start,end,tid)\n")
     out.append(headerObject+".dynamicSet(dIdx,accDynamic)\n")
     out.append("dIdx = "+headerObject+".getDynamicChunkIndex()\n")
     out.append("}\n")
@@ -73,21 +74,23 @@ class ScalaMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, va
     out.append("val acc = "+headerObject+".dynamicGet(myThreadDynamicIndexStart)\n")
     "acc"
   }
-  protected def dynamicCombine(acc: String) = {
+
+  protected def combineLocal(acc: String) = {
     out.append("var i = 1+myThreadDynamicIndexStart\n")
     out.append("while(i < myThreadDynamicIndexEnd){\n")
-    out.append(closure+".combine("+acc+","+headerObject+".dynamicGet(i))\n")
+    combine(acc, headerObject+".dynamicGet(i)")
     out.append("i += 1\n")
     out.append("}\n")
   }
-  protected def dynamicPostCombine(acc: String) = {
+
+  protected def postCombine(acc: String) = {
     if (chunkIdx != 0) {
       postCombine(acc, get("B", chunkIdx-1)) //linear chain combine
     }
     out.append("var j = 1+myThreadDynamicIndexStart\n")
     out.append("var old = "+acc+"\n")
     out.append("while(j < myThreadDynamicIndexEnd){\n")
-    out.append(closure+".postCombine("+headerObject+".dynamicGet(j),old)\n")
+    postCombine(headerObject+".dynamicGet(j)", "old")
     out.append("old = "+headerObject+".dynamicGet(j)\n")
     out.append("j += 1\n")
     out.append("}\n")
@@ -99,7 +102,7 @@ class ScalaMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, va
 
     out.append("j = myThreadDynamicIndexStart\n")
     out.append("while(j < myThreadDynamicIndexEnd){\n")
-    out.append(closure+".postProcess("+headerObject+".dynamicGet(j))\n")
+    postProcess(headerObject+".dynamicGet(j)")
     out.append("j += 1\n")
     out.append("}\n")
   }
@@ -112,29 +115,24 @@ class ScalaMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, va
     "out"
   }
 
-  protected def processRange(outputSym: String, start: String, end: String) = {
-    out.append("val acc = "+closure+".processRange("+outputSym+","+start+","+end+")\n")
-    "acc"
-  }
-
   protected def combine(acc: String, neighbor: String) {
-    out.append(closure+".combine("+acc+", "+neighbor+")\n")
+    out.append(closure+".combine("+acc+", "+neighbor+", "+chunkIdx+")\n")
   }
 
   protected def postProcess(acc: String) {
-    out.append(closure+".postProcess("+acc+")\n")
+    out.append(closure+".postProcess("+acc+","+chunkIdx+")\n")
   }
 
   protected def postProcInit(acc: String) {
-    out.append(closure+".postProcInit("+acc+")\n")
+    out.append(closure+".postProcInit("+acc+","+chunkIdx+")\n")
   }
 
   protected def postCombine(acc: String, neighbor: String) {
-    out.append(closure+".postCombine("+acc+", "+neighbor+")\n")
+    out.append(closure+".postCombine("+acc+", "+neighbor+", "+chunkIdx+")\n")
   }
 
   protected def finalize(acc: String) {
-    out.append(closure+".finalize("+acc+")\n")
+    out.append(closure+".finalize("+acc+","+chunkIdx+")\n")
   }
 
   protected def set(syncObject: String, idx: Int, value: String) {

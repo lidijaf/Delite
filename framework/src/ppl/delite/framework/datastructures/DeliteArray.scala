@@ -10,10 +10,10 @@ import ppl.delite.framework.Config
 import scala.collection.mutable.HashSet
 
 
-trait DeliteArray[T] extends DeliteCollection[T] 
+trait DeliteArray[T] extends DeliteCollection[T]
 
-trait DeliteArrayOps extends StringOps {
-  
+trait DeliteArrayOps extends RuntimeServiceOps with StringOps {
+
   object DeliteArray {
     def apply[T:Manifest](length: Rep[Long])(implicit ctx: SourceContext) = darray_new(length)
     def imm[T:Manifest](length: Rep[Long])(implicit ctx: SourceContext) = darray_new_immutable(length)
@@ -42,7 +42,7 @@ trait DeliteArrayOps extends StringOps {
     def sort = darray_sort(da)
     def toSeq = darray_toseq(da)
   }
-    
+
   implicit def darrayToString[A:Manifest](x: Rep[DeliteArray[A]]): Rep[String] = "[ " + repDArrayToDArrayOps(x).mkString(unit(" ")) + " ]"
   def infix_+[A:Manifest](lhs: String, rhs: Rep[DeliteArray[A]]) = string_plus(unit(lhs), darrayToString[A](rhs))
   
@@ -78,7 +78,7 @@ trait DeliteArrayCompilerOps extends DeliteArrayOps {
   def darray_unsafe_copy[T:Manifest](src: Rep[DeliteArray[T]], srcPos: Rep[Long], dest: Rep[DeliteArray[T]], destPos: Rep[Long], len: Rep[Long])(implicit ctx: SourceContext): Rep[Unit]
 }
 
-trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTags with DeliteCollectionOpsExp with DeliteStructsExp with EffectExp with PrimitiveOpsExp {
+trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTags with DeliteCollectionOpsExp with DeliteStructsExp with RuntimeServiceOpsExp with EffectExp with PrimitiveOpsExp with EqualExpBridge {
   this: DeliteOpsExp with DeliteMapOpsExp =>
 
   //////////////////
@@ -110,6 +110,34 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   case class DeliteArrayGetActSize() extends Def[Long]
 
   //////////////////
+  // NUMA ops
+
+  // allocates an empty DeliteArrayNuma wrapper
+  // 'ghost' refers to the number of overlapping cells to be allocated at each socket
+  // TODO: investigate - does using DeliteArrayNuma break other optimizations (e.g. SoA)?
+  case class DeliteArrayNumaAlloc[A:Manifest](logicalLength: Exp[Int], ghost: Exp[Int]) extends DefWithManifest[A,DeliteArray[A]]
+
+  // initializes DeliteArrayNumaWrapper with concrete DeliteArrays
+  // this method is locality-aware, since 1 thread pinned to each socket allocates the corresponding array for that socket
+  case class DeliteArrayNumaInit[A:Manifest](wrapper: Exp[DeliteArray[A]], length: Exp[Int]) extends DeliteOpIndexedLoop {
+    val mA = manifest[A]
+    val size = copyTransformedOrElse(_.size)(DELITE_NUM_THREADS)
+
+    def func = i => {
+      if (equals_fwd(i % DELITE_THREADS_PER_SOCKET, unit(0))) {
+        darray_numa_alloc_internal(wrapper, i.toInt)
+      }
+      unit(())
+    }
+  }
+
+  // performs the internal alloc called by darray_numa_alloc_internal
+  case class DeliteArrayNumaAllocInternal[A:Manifest](wrapper: Exp[DeliteArray[A]], threadIndex: Exp[Int]) extends DefWithManifest[A,Unit]
+
+  // combine internal DeliteArrays using average, performing a NUMA sync
+  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
+
+  //////////////////
   // delite ops
   
   case class DeliteArrayMap[A:Manifest,B:Manifest](in: Exp[DeliteArray[A]], func: Exp[A] => Exp[B])(implicit ctx: SourceContext)
@@ -118,7 +146,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     val size = copyTransformedOrElse(_.size)(in.length)
     override def alloc(len: Exp[Long]) = DeliteArray[B](len)
   }
-  
+
   case class DeliteArrayZipWith[A:Manifest,B:Manifest,R:Manifest](inA: Exp[DeliteArray[A]], inB: Exp[DeliteArray[B]],
                                                                   func: (Exp[A], Exp[B]) => Exp[R])
     extends DeliteOpZipWith[A,B,R,DeliteArray[R]] {
@@ -138,6 +166,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     val size = copyTransformedOrElse(_.size)(in.length)
     val mA = manifest[A]
   }
+
   case class DeliteArrayMapFilter[A:Manifest,B:Manifest](in: Exp[DeliteArray[A]], func: Exp[A] => Exp[B], cond: Exp[A] => Exp[Boolean])
     extends DeliteOpFilter[A,B,DeliteArray[B]] {
 
@@ -158,15 +187,15 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   }
 
   case class DeliteArraySortIndices[A:Manifest](length: Rep[Long], sV: (Sym[Long],Sym[Long]), comparator: Block[Int]) extends DefWithManifest[A,DeliteArray[Long]]
+
   
-   
   /////////////////////
   // delite collection
-    
-  def isDeliteArray[A](x: Exp[DeliteCollection[A]])(implicit ctx: SourceContext) = isSubtype(x.tp.erasure,classOf[DeliteArray[A]])  
+
+  def isDeliteArray[A](x: Exp[DeliteCollection[A]])(implicit ctx: SourceContext) = isSubtype(x.tp.erasure,classOf[DeliteArray[A]])
   def asDeliteArray[A](x: Exp[DeliteCollection[A]])(implicit ctx: SourceContext) = x.asInstanceOf[Exp[DeliteArray[A]]]
-    
-  override def dc_size[A:Manifest](x: Exp[DeliteCollection[A]])(implicit ctx: SourceContext) = { 
+
+  override def dc_size[A:Manifest](x: Exp[DeliteCollection[A]])(implicit ctx: SourceContext) = {
     if (isDeliteArray(x)) asDeliteArray(x).length
     else super.dc_size(x)
   }
@@ -178,7 +207,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   
   override def dc_update[A:Manifest](x: Exp[DeliteCollection[A]], n: Exp[Long], y: Exp[A])(implicit ctx: SourceContext) = {
     if (isDeliteArray(x)) asDeliteArray(x).update(n,y)
-    else super.dc_update(x,n,y)        
+    else super.dc_update(x,n,y)
   }
 
   override def dc_set_logical_size[A:Manifest](x: Exp[DeliteCollection[A]], y: Exp[Long])(implicit ctx: SourceContext) = {
@@ -191,7 +220,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       }
       unit(())
     }
-    else super.dc_set_logical_size(x,y)        
+    else super.dc_set_logical_size(x,y)
   }
   
   override def dc_parallelization[A:Manifest](x: Exp[DeliteCollection[A]], hasConditions: Boolean)(implicit ctx: SourceContext) = {
@@ -248,11 +277,11 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   /* 
    * rewrites to make update operations atomic when the array is nested within another object (Variable, Struct)
    * these allow DSL authors to create data structures such as Var(Array), access them normally, and still work with the effects system
-   * by preventing mutable aliases, i.e. preventing the compiler from ever sharing a reference to anything but the outermost object   
+   * by preventing mutable aliases, i.e. preventing the compiler from ever sharing a reference to anything but the outermost object
    */
   def darray_update[T:Manifest](da: Exp[DeliteArray[T]], i: Exp[Long], x: Exp[T])(implicit ctx: SourceContext) = da match {
     case Def(Field(struct,name)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array)
-    case Def(Reflect(Field(struct,name),u,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array) 
+    case Def(Reflect(Field(struct,name),u,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array)
     case Def(Reflect(ReadVar(Variable(Def(Reflect(Field(struct,name),_,_)))),_,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(struct)(StructUpdate[T](s,f,List(i),x))) //Struct(Var(Array))
     case Def(Reflect(ReadVar(v),_,_)) => reflectWrite(v.e)(VarUpdate[T](v,i,x)) //Var(Array)
     case Def(DeliteArrayApply(arr,j)) => recurseFields(arr, Nil, (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(j,i),x))) //Struct(Array(Array)) //TODO: generalize to arbitrary array nests?
@@ -264,7 +293,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     case Def(Reflect(Field(s,name),_,_)) => recurseFields(s, name :: fields, result)
     case _ => result(struct, fields)
   }
-  
+
   //should ideally express all update-like operations in terms of darray_update in order to avoid this duplication, but we want to special-case darray_copy codegen
   def darray_copy[T:Manifest](src: Exp[DeliteArray[T]], srcPos: Exp[Long], dest: Exp[DeliteArray[T]], destPos: Exp[Long], len: Exp[Long])(implicit ctx: SourceContext) = dest match {
     case Def(Field(struct,name)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructCopy[T](src,srcPos,s,f,List(destPos),len))) //Struct(Array)
@@ -272,7 +301,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     case Def(Reflect(ReadVar(Variable(Def(Reflect(Field(struct,name),_,_)))),_,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructCopy[T](src,srcPos,s,f,List(destPos),len))) //Struct(Var(Array))
     case Def(Reflect(ReadVar(v),_,_)) => reflectWrite(v.e)(VarCopy[T](src, srcPos, v, destPos, len)) //Var(Array)
     case Def(DeliteArrayApply(arr,j)) => recurseFields(arr, Nil, (s,f) => reflectWrite(s)(StructCopy[T](src,srcPos,s,f,List(j,destPos),len))) //Struct(Array(Array))
-    case _ => reflectWrite(dest)(DeliteArrayCopy(src,srcPos,dest,destPos,len))  
+    case _ => reflectWrite(dest)(DeliteArrayCopy(src,srcPos,dest,destPos,len))
   }
 
   def darray_map[A:Manifest,B:Manifest](a: Exp[DeliteArray[A]], f: Exp[A] => Exp[B])(implicit ctx: SourceContext) = reflectPure(DeliteArrayMap(a,f))   
@@ -301,12 +330,29 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     reflectPure(DeliteArraySortIndices(length, sV, reifyEffects(comparator(sV._1,sV._2))))
   }
 
+  /////////////////////
+  // numa-aware methods
+
+  // ghost represents number of cells to copy (+- ghost in 1-d)
+  def darray_numa_empty[T:Manifest](length: Exp[Int], ghost: Exp[Int])(implicit ctx: SourceContext) = {
+    val out = reflectMutable(DeliteArrayNumaAlloc(length, ghost))
+    reflectWrite(out)(DeliteArrayNumaInit(out, length))
+    out
+  }
+
+  def darray_numa_alloc_internal[T:Manifest](wrapper: Exp[DeliteArray[T]], threadIndex: Exp[Int])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
+  }
+
+  def darray_numa_combine_average[T:Numeric:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper))
+  }
+
   /////////////
   // internal
   
   def darray_unsafe_update[T:Manifest](x: Exp[DeliteArray[T]], n: Exp[Long], y: Exp[T])(implicit ctx: SourceContext) = DeliteArrayUpdate(x,n,y)
   def darray_unsafe_copy[T:Manifest](src: Exp[DeliteArray[T]], srcPos: Exp[Long], dest: Exp[DeliteArray[T]], destPos: Exp[Long], len: Exp[Long])(implicit ctx: SourceContext) = DeliteArrayCopy(src,srcPos,dest,destPos,len)  
-  
   def darray_set_act_buf[A:Manifest](da: Exp[DeliteArray[A]]) = reflectEffect(DeliteArraySetActBuffer(da), Write(List(da.asInstanceOf[Sym[Any]])) andAlso Simple())
   def darray_unsafe_set_act_buf[A:Manifest](da: Exp[DeliteArray[A]]) = reflectEffect(DeliteArraySetActBuffer(da))
   def darray_unsafe_get_act_size(): Exp[Long] = reflectEffect(DeliteArrayGetActSize())
@@ -317,19 +363,19 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
 
   override def mirror[A:Manifest](e: Def[A], f: Transformer)(implicit pos: SourceContext): Exp[A] = {
     (e match {
-      case SimpleStruct(SoaTag(tag, length), elems) => struct(SoaTag(tag, f(length)), elems map { case (k,v) => (k, f(v)) })      
+      case SimpleStruct(SoaTag(tag, length), elems) => struct(SoaTag(tag, f(length)), elems map { case (k,v) => (k, f(v)) })
       case e@DeliteArrayNew(l,m) => darray_new_immutable(f(l))(m,pos)
       case DeliteArrayLength(a) => darray_length(f(a))
       case e@DeliteArrayApply(a,x) => darray_apply(f(a),f(x))(e.mA,pos)
+      case e@DeliteArrayUpdate(l,i,r) => darray_unsafe_update(f(l),f(i),f(r))
+      case e@DeliteArrayCopy(a,ap,d,dp,l) => toAtom(DeliteArrayCopy(f(a),f(ap),f(d),f(dp),f(l))(e.mA))(mtype(manifest[A]),pos)
       case e@DeliteArrayTake(a,x) => darray_take(f(a),f(x))(e.mA,pos)
       case e@DeliteArrayMkString(a,s) => darray_mkstring(f(a),f(s))(e.mA,pos)
       case e@DeliteArraySort(x) => darray_sort(f(x))(e.mA,pos)
-      case e@DeliteArrayUpdate(l,i,r) => darray_unsafe_update(f(l),f(i),f(r))
-      case e@DeliteArrayCopy(a,ap,d,dp,l) => toAtom(DeliteArrayCopy(f(a),f(ap),f(d),f(dp),f(l))(e.mA))(mtype(manifest[A]),pos)
       case e@DeliteArrayMap(in,g) => reflectPure(new { override val original = Some(f,e) } with DeliteArrayMap(f(in),f(g))(e.dmA,e.dmB,pos))(mtype(manifest[A]),pos)      
       case e@DeliteArrayFlatMap(in,g) => reflectPure(new { override val original = Some(f,e) } with DeliteArrayFlatMap(f(in),f(g))(e.dmA,e.dmB))(mtype(manifest[A]),pos)      
       case e@DeliteArrayZipWith(inA,inB,g) => reflectPure(new { override val original = Some(f,e) } with DeliteArrayZipWith(f(inA),f(inB),f(g))(e.dmA,e.dmB,e.dmR))(mtype(manifest[A]),pos)
-      case e@DeliteArrayReduce(in,g,z) => 
+      case e@DeliteArrayReduce(in,g,z) =>
         e.asInstanceOf[DeliteArrayReduce[A]] match { //scalac typer bug
           case e@DeliteArrayReduce(in,g,z) => 
             reflectPure(new { override val original = Some(f,e) } with DeliteArrayReduce[A](f(in),f(g),f(z))(mtype(e.dmA),pos))(mtype(e.dmA),pos)
@@ -344,12 +390,12 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@DeliteArrayUpdate(l,i,r), u, es) => reflectMirrored(Reflect(DeliteArrayUpdate(f(l),f(i),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
       case Reflect(e@StructUpdate(s,n,i,x), u, es) => reflectMirrored(Reflect(StructUpdate(f(s),n,f(i),f(x))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
       case Reflect(e@VarUpdate(Variable(a),i,x), u, es) => reflectMirrored(Reflect(VarUpdate(Variable(f(a)),f(i),f(x))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)  
+      case Reflect(e@DeliteArrayCopy(a,ap,d,dp,l), u, es) => reflectMirrored(Reflect(DeliteArrayCopy(f(a),f(ap),f(d),f(dp),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)     
       case Reflect(e@StructCopy(s,sp,st,n,dp,l), u, es) => reflectMirrored(Reflect(StructCopy(f(s),f(sp),f(st),n,f(dp),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
       case Reflect(e@VarCopy(s,sp,Variable(a),dp,l), u, es) => reflectMirrored(Reflect(VarCopy(f(s),f(sp),Variable(f(a)),f(dp),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)  
       case Reflect(e@DeliteArrayTake(a,x), u, es) => reflectMirrored(Reflect(DeliteArrayTake(f(a),f(x))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayMkString(a,s), u, es) => reflectMirrored(Reflect(DeliteArrayMkString(f(a),f(s))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArraySort(x), u, es) => reflectMirrored(Reflect(DeliteArraySort(f(x))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)     
-      case Reflect(e@DeliteArrayCopy(a,ap,d,dp,l), u, es) => reflectMirrored(Reflect(DeliteArrayCopy(f(a),f(ap),f(d),f(dp),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)     
       case Reflect(e@DeliteArrayMap(in,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayMap(f(in),f(g))(e.dmA,e.dmB,pos), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayFlatMap(in,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayFlatMap(f(in),f(g))(e.dmA,e.dmB), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayZipWith(inA,inB,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayZipWith(f(inA),f(inB),f(g))(e.dmA,e.dmB,e.dmR), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
@@ -360,26 +406,31 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
         }
       case Reflect(e@DeliteArrayMapFilter(in,g,c), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayMapFilter(f(in),f(g),f(c))(e.dmA,e.dmB), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayFromFunction(l,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayFromFunction(f(l),f(g))(e.dmA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArraySortIndices(l,s,c), u, es) => reflectMirrored(Reflect(DeliteArraySortIndices(f(l), (f(s._1).asInstanceOf[Sym[Long]],f(s._2).asInstanceOf[Sym[Long]]), f(c))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayGetActSize(), u, es) => reflectMirrored(Reflect(DeliteArrayGetActSize(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArraySetActBuffer(da), u, es) => reflectMirrored(Reflect(DeliteArraySetActBuffer(f(da))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayForeach(in,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayForeach(f(in),f(g))(mtype(e.mA)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaAlloc(l,g), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAlloc(f(l),f(g))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case _ => super.mirror(e,f)
-    }).asInstanceOf[Exp[A]] // why??
+    }).asInstanceOf[Exp[A]]
   }
-  
+
   override def syms(e: Any): List[Sym[Any]] = e match {
     case Def(SimpleStruct(SoaTag(tag, length), elems)) => syms(length) ++ super.syms(e)
     case _ => super.syms(e)
   }
-  
+
   override def symsFreq(e: Any): List[(Sym[Any], Double)] = e match {
     case Def(SimpleStruct(SoaTag(tag, length), elems)) => symsFreq(length) ++ super.symsFreq(e)
     case _ => super.symsFreq(e)
-  }  
-  
+  }
+
   /////////////////////
   // aliases and sharing
-  
+
   override def aliasSyms(e: Any): List[Sym[Any]] = e match {
     case DeliteArrayCopy(s,sp,d,dp,l) => Nil
     case _ => super.aliasSyms(e)
@@ -399,14 +450,14 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   override def copySyms(e: Any): List[Sym[Any]] = e match {
     case DeliteArrayCopy(s,sp,d,dp,l) => Nil // ??
     case _ => super.copySyms(e)
-  }    
+  }
 
   override def boundSyms(e: Any): List[Sym[Any]] = e match {
     case DeliteArraySortIndices(len, v, comp) => syms(v) ++ effectSyms(comp)
     case _ => super.boundSyms(e)
   }
 
-  
+
 }
 
 trait DeliteArrayStructTags extends Base with StructTags {
@@ -431,12 +482,12 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
       case _ => None
     }
   }
-  
+
 
   //choosing the length of the first array creates an unnecessary dependency (all arrays must have same length), so we store length in the tag
   override def darray_length[T:Manifest](da: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = da match {
     case Def(Loop(size,_,b:DeliteCollectElem[_,_,_])) if b.cond == Nil && b.par == ParFlat => size
-    case StructIR(tag, len, elems) => 
+    case StructIR(tag, len, elems) =>
       printlog("**** extracted array length: " + len.toString)
       len
     case StructType(tag, fields) if Config.soaEnabled =>
@@ -595,7 +646,7 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
   }
   
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
-    case a@DeliteArrayNew(n,m) if Config.generateSerializable && isPrimitiveType(m) => 
+    case a@DeliteArrayNew(n,m) if Config.generateSerializable && isPrimitiveType(m) =>
       emitValDef(sym, "new ppl.delite.runtime.data.LocalDeliteArray" + remap(m) + "(" + quote(n) + ")")
       if (Config.enableProfiler) emitLogOfArrayAllocation(sym.id, n, m.erasure.getSimpleName)
     case a@DeliteArrayNew(n,m) if Config.generateSerializable =>
@@ -622,14 +673,14 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
     case DeliteArrayUnion(lhs,rhs) if !Config.generateSerializable =>
       emitValDef(sym, quote(lhs) + " union " + quote(rhs))
     case DeliteArrayIntersect(lhs,rhs) if !Config.generateSerializable =>
-      emitValDef(sym, quote(lhs) + " intersect " + quote(rhs))  
-    case a@DeliteArraySort(x) if !Config.generateSerializable => 
+      emitValDef(sym, quote(lhs) + " intersect " + quote(rhs))
+    case a@DeliteArraySort(x) if !Config.generateSerializable =>
       stream.println("val " + quote(sym) + " = {")
       stream.println("val d = new Array[" + remap(a.mA) + "](" + quote(x) + ".length" + ")")
       stream.println("System.arraycopy(" + quote(x) + ", 0, d, 0, " + quote(x) + ".length)")
       stream.println("generated.scala.container.SortingImpl.sort(d)")
       stream.println("d")
-      stream.println("}")    
+      stream.println("}")
     case a@DeliteArraySortIndices(len,sV,comp) if !Config.generateSerializable =>
       stream.println("val " + quote(sym) + " = {")
       stream.println("val len = " + quote(len) + ".asInstanceOf[Int]")
@@ -645,7 +696,7 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
       stream.println("generated.scala.container.SortingImpl.sort(d,comp)")
       stream.println("d")
       stream.println("}")
-    case DeliteArrayToSeq(a) if !Config.generateSerializable => 
+    case DeliteArrayToSeq(a) if !Config.generateSerializable =>
       emitValDef(sym, quote(a) + ".toSeq")
     case StructUpdate(struct, fields, idx, x) =>
       emitValDef(sym, quote(struct) + "." + fields.mkString(".") + idx.map(e=>"("+quote(e)+".asInstanceOf[Int])").mkString("") + " = " + quote(x))
@@ -775,7 +826,7 @@ trait CudaGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CudaGenFat with 
       if(isNestedNode) {
         // If size is known before launching the kernel (same size for all the threads), allocate outside the kernel
         //TODO: automatically figure out which access pattern is the best
-        if(deliteInputs.contains(n)) { 
+        if(deliteInputs.contains(n)) {
           val allocSym = registerTempAlloc(sym,m,n)
           stream.println(remap(sym.tp) + " " + quote(sym) + "(" + quote(n) + "," + allocSym + "," + quote(outerLoopSym) + ",max(2*blockDim.x*gridDim.x,blockDim.x*(1+" + quote(outerLoopSize) + "/blockDim.x)));")
           //stream.println("DeliteArray< " + remap(m) + " > " + quote(sym) + " = DeliteArray< " + remap(m) + " >(" + quote(n) + "," + allocSym + "," + quote(outerLoopSym) + ",blockDim.x*gridDim.x);")
@@ -791,7 +842,7 @@ trait CudaGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CudaGenFat with 
           stream.println("if (tempMemSize < tempMemUsage[" + quote(outerLoopSym) + "] + sizeof(" + remap(m) + ")*" + quote(n) + ") {")
           stream.println("assert(false);")
           stream.println("}")
-          stream.println(remap(m) + " *" + quote(sym) + "Ptr = (" + remap(m) + "*)(tempMemPtr + tempMemUsage[" + quote(outerLoopSym) + "]*" + quote(outerLoopSize) + ");") 
+          stream.println(remap(m) + " *" + quote(sym) + "Ptr = (" + remap(m) + "*)(tempMemPtr + tempMemUsage[" + quote(outerLoopSym) + "]*" + quote(outerLoopSize) + ");")
           stream.println("tempMemUsage[" + quote(outerLoopSym) + "] = tempMemUsage[" + quote(outerLoopSym) + "] + sizeof(" + remap(m) + ")*" + quote(n) + ";")
           stream.println(remap(sym.tp) + " " + quote(sym) + "(" + quote(n) + "," + quote(sym) + "Ptr," + quote(outerLoopSym) + "*" + quote(n) + ",1);")
         }
@@ -929,18 +980,33 @@ trait OpenCLGenDeliteArrayOps extends CLikeGenDeliteArrayOps with OpenCLGenFat w
 
 }
 
-trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct with CGenDeliteOps {
+trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct with CGenDeliteOps with CGenEqual with CGenRuntimeServiceOps {
   val IR: DeliteArrayFatExp with DeliteOpsExp
   import IR._
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
     case a@DeliteArrayNew(n,m) => 
       // NOTE: DSL operations should not rely on the fact that JVM initializes arrays with 0
-      stream.println("assert(" + quote(n) + " < (size_t)-1)")
+      stream.println("assert(" + quote(n) + " < (size_t)-1);")
       if (cppMemMgr == "refcnt")  
         stream.println(remap(sym.tp) + " " + quote(sym) + "(new " + unwrapSharedPtr(remap(sym.tp)) + "(" + quote(n) + "), " + unwrapSharedPtr(remap(sym.tp)) + "D());")
       else
         emitValDef(sym, "new " + remap(sym.tp) + "(" + quote(n) + ")")
+
+    // NUMA-aware
+    case a@DeliteArrayNumaAlloc(len, numGhostCells) =>
+      emitValDef(sym, "new cppDeliteArrayNuma<"+remap(a.mA) + addRef(a.mA)+">("+quote(len)+","+quote(numGhostCells)+");")
+    case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
+      stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
+    case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
+      // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
+      emitValDef(sym, quote(da) + "->applyAt(__act->tid, " + quote(idx) + ");")
+    case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
+      // this will only work if we are in the context of a multiloop!
+      stream.println(quote(da) + "->updateAt(__act->tid, " + quote(idx) + ", " + quote(x) + ");")
+    case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
+    // --
+
     case DeliteArrayLength(da) =>
       emitValDef(sym, quote(da) + "->length")
     case DeliteArrayApply(da, idx) =>

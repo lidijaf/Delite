@@ -60,7 +60,7 @@ class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val 
     }
   }
 
-  protected def dynamicScheduler(outputSym: String) : String = {
+  protected def processLocal(outputSym: String) : String = {
     //used to be calculate range
     out.append("int64_t startOffset = "+closure+"->loopStart;\n")
     out.append("int64_t size = "+closure+"->loopSize;\n")
@@ -70,11 +70,11 @@ class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val 
     "acc"
   }
 
-  protected def dynamicCombine(acc: String) = {
+  protected def combineLocal(acc: String) = {
     out.append("")
   }
   
-  protected def dynamicPostCombine(acc: String) = {
+  protected def postCombine(acc: String) = {
     if (chunkIdx != 0) {
       postCombine(acc, get("B", chunkIdx-1)) //linear chain combine
     }
@@ -96,28 +96,28 @@ class CppMultiLoopGenerator(val op: OP_MultiLoop, val master: OP_MultiLoop, val 
   }
 
   protected def processRange(outputSym: String, start: String, end: String) = {
-    out.append(master.outputType(Targets.Cpp)+"* acc = "+closure+"->processRange("+outputSym+","+start+","+end+");\n")
+    out.append(master.outputType(Targets.Cpp)+"* acc = "+closure+"->processRange("+outputSym+","+start+","+end+","+chunkIdx+");\n")
     "acc"
   }
 
   protected def combine(acc: String, neighbor: String) {
-    out.append(closure+"->combine("+acc+", "+neighbor+");\n")
+    out.append(closure+"->combine("+acc+", "+neighbor+", "+chunkIdx+");\n")
   }
 
   protected def postProcess(acc: String) {
-    out.append(closure+"->postProcess("+acc+");\n")
+    out.append(closure+"->postProcess("+acc+", "+chunkIdx+");\n")
   }
 
   protected def postProcInit(acc: String) {
-    out.append(closure+"->postProcInit("+acc+");\n")
+    out.append(closure+"->postProcInit("+acc+","+chunkIdx+");\n")
   }
 
   protected def postCombine(acc: String, neighbor: String) {
-    out.append(closure+"->postCombine("+acc+", "+neighbor+");\n")
+    out.append(closure+"->postCombine("+acc+", "+neighbor+", "+chunkIdx+");\n")
   }
 
   protected def finalize(acc: String) {
-    out.append(closure+"->finalize("+acc+");\n")
+    out.append(closure+"->finalize("+acc+","+chunkIdx+");\n")
   }
 
   protected def set(syncObject: String, idx: Int, value: String) {
