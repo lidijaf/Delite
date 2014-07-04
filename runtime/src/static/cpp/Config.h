@@ -4,31 +4,31 @@
 class Config {
 public:
     int numThreads;
-    int numCores;
+    int numCoresPerSocket;
     int numSockets;
 
     Config(int _numThreads) {
         numThreads = _numThreads;
-        numCores = _numThreads;
+        numCoresPerSocket = _numThreads;
         numSockets = 1;
     }
 
-    Config(int _numThreads, int _numCores, int _numSockets) {
+    Config(int _numThreads, int _numCoresPerSocket, int _numSockets) {
         numThreads = _numThreads;
-        numCores = _numCores;
+        numCoresPerSocket = _numCoresPerSocket;
         numSockets = _numSockets;
     }
 
-    // current strategy is to spill threads to a new socket only when full
-    int threadsPerSocket() {
-        return numCores / numSockets;
+    int numCores() {
+        return numCoresPerSocket * numSockets;
     }
 
+    //current strategy is to spill threads to next socket when all cores are filled
+    //then repeat for numThreads > numCores
     int threadToSocket(int threadId) {
-        int socketId = (threadId / threadsPerSocket()) % numSockets;
+        int socketId = threadId / numCoresPerSocket % numSockets;
         return socketId;
     }
 };
 
 #endif
-

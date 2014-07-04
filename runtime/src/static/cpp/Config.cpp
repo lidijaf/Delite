@@ -15,8 +15,7 @@ Config* config = 0;
 std::mutex init_mtx;
 
 // heavy-handed, but doesn't appear there is another good way
-int getNumCores(int numSockets) {
-    FILE* pipe = popen("grep cores /proc/cpuinfo | head -1 | cut -d ':' -f 2 | tr -d ' '", "r");
+int getCpuInfo(FILE* pipe) {
     if (!pipe) return -1;
 
     char buffer[128];
@@ -28,27 +27,58 @@ int getNumCores(int numSockets) {
     pclose(pipe);
 
     try {	
-        int coresPerSocket = std::stoi(result);
-	   return coresPerSocket*numSockets;
+        int info = std::stoi(result);
+        return info;
     }
     catch(std::exception const &e) {
 	   return -1;
     }
 }
 
+int getNumCoresPerSocket() {
+    FILE* pipe = popen("grep 'cores' /proc/cpuinfo 2> /dev/null | head -1 | cut -d ':' -f 2 | tr -d ' ' 2> /dev/null", "r");
+    return getCpuInfo(pipe);
+}
+
+int getNumSockets() {
+    FILE* pipe = popen("grep 'physical id' /proc/cpuinfo 2> /dev/null | tail -1 | cut -d ':' -f 2 | tr -d ' ' 2> /dev/null", "r");
+    return getCpuInfo(pipe);
+}
+
 void initializeConfig(int numThreads) {
     config = new Config(numThreads);
+    
+    //detect physical config
+    int numSockets = getNumSockets();
+    int numCoresPerSocket = getNumCoresPerSocket();
+    int numCores = numCoresPerSocket * numSockets;
+
+    //detect numa config
     #ifdef __DELITE_CPP_NUMA__
     if (numa_available() >= 0) {
-        config->numSockets = numa_num_configured_nodes();
-        config->numCores = getNumCores(config->numSockets);
-	if (config->numCores == -1)
-	    config->numCores = numa_num_configured_cpus();
+        int numCpus = numa_num_configured_cpus();
+        if (numCoresPerSocket <= 0) {
+            printf("[WARNING]: Unable to automatically determine number of physical cores, assuming %d\n", numCpus);
+            numCores = numCpus;
+        }
+
+        int numNodes = numa_num_configured_nodes();
+        if (numSockets > 0 && numSockets != numNodes) {
+            printf("[WARNING]: Found %d sockets but %d NUMA nodes. Using %d nodes\n", numSockets, numNodes, numNodes);
+        }
+        numSockets = numNodes;
+        numCoresPerSocket = numCores / numSockets; //potentially re-distribute cores across nodes
     }
     #endif
-    // printf("numThreads: %d\n", config->numThreads);
-    // printf("numCores: %d\n", config->numCores);
-    // printf("numSockets: %d\n", config->numSockets);
+
+    if (numSockets > 0 && numCoresPerSocket > 0) {
+        config->numSockets = numSockets;
+        config->numCoresPerSocket = numCoresPerSocket;
+        printf("[delite]: Detected machine configuration of %d socket(s) with %d core(s) per socket.\n", config->numSockets, config->numCoresPerSocket);
+    }
+    else {
+        printf("[WARNING]: Unable to automatically detect machine configuration.  Assuming %d socket(s) with %d core(s) per socket.\n", config->numSockets, config->numCoresPerSocket);
+    }
 }
 
 
@@ -65,7 +95,7 @@ JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_initi
     if (numa_available() >= 0) {
         int socketId = config->threadToSocket(threadId);
         if (socketId < numa_num_configured_nodes()) {
-            printf("binding thread %d to cpu %d, socket %d\n", threadId, threadId, socketId);
+            printf("[DELITE]: Binding thread %d to cpu %d, socket %d\n", threadId, threadId, socketId);
             bitmask* cpumask = numa_allocate_cpumask();
             numa_bitmask_setbit(cpumask, threadId);
             numa_sched_setaffinity(0, cpumask);
