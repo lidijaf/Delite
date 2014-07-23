@@ -36,12 +36,12 @@ int getCpuInfo(FILE* pipe) {
 }
 
 int getNumCoresPerSocket() {
-    FILE* pipe = popen("grep 'cores' /proc/cpuinfo 2> /dev/null | head -1 | cut -d ':' -f 2 | tr -d ' ' 2> /dev/null", "r");
+    FILE* pipe = popen("grep 'cores' /proc/cpuinfo 2> /dev/null | head -1 | cut -d ':' -f 2 | tr -d ' '", "r");
     return getCpuInfo(pipe);
 }
 
 int getNumSockets() {
-    FILE* pipe = popen("grep 'physical id' /proc/cpuinfo 2> /dev/null | tail -1 | cut -d ':' -f 2 | tr -d ' ' 2> /dev/null", "r");
+    FILE* pipe = popen("grep 'physical id' /proc/cpuinfo 2> /dev/null | tail -1 | cut -d ':' -f 2 | tr -d ' '", "r");
     return getCpuInfo(pipe);
 }
 

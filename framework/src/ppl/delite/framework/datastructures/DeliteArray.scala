@@ -84,7 +84,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   //////////////////
   // codegen ops
 
-  case class DeliteArrayNew[T](length: Exp[Long], m: Manifest[T]/*, tag: PartitionTag[T]*/) extends Def[DeliteArray[T]] //pass in manifest explicitly so type becomes part of equality (cse) check
+  case class DeliteArrayNew[T](length: Exp[Long], m: Manifest[T], tag: PartitionTag[T]) extends Def[DeliteArray[T]] //pass in manifest explicitly so type becomes part of equality (cse) check
   case class DeliteArrayLength[T:Manifest](da: Exp[DeliteArray[T]]) extends DefWithManifest[T,Long]
   case class DeliteArrayApply[T:Manifest](da: Exp[DeliteArray[T]], i: Exp[Long]) extends DefWithManifest[T,T]
   case class DeliteArrayUpdate[T:Manifest](da: Exp[DeliteArray[T]], i: Exp[Long], x: Exp[T]) extends DefWithManifest[T,Unit]
@@ -109,33 +109,6 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   case class DeliteArraySetActBuffer[T:Manifest](da: Exp[DeliteArray[T]]) extends DefWithManifest[T,Unit]
   case class DeliteArrayGetActSize() extends Def[Long]
 
-  //////////////////
-  // NUMA ops
-
-  // allocates an empty DeliteArrayNuma wrapper
-  // 'ghost' refers to the number of overlapping cells to be allocated at each socket
-  // TODO: investigate - does using DeliteArrayNuma break other optimizations (e.g. SoA)?
-  case class DeliteArrayNumaAlloc[A:Manifest](logicalLength: Exp[Int], ghost: Exp[Int]) extends DefWithManifest[A,DeliteArray[A]]
-
-  // initializes DeliteArrayNumaWrapper with concrete DeliteArrays
-  // this method is locality-aware, since 1 thread pinned to each socket allocates the corresponding array for that socket
-  case class DeliteArrayNumaInit[A:Manifest](wrapper: Exp[DeliteArray[A]], length: Exp[Int]) extends DeliteOpIndexedLoop {
-    val mA = manifest[A]
-    val size = copyTransformedOrElse(_.size)(DELITE_NUM_THREADS)
-
-    def func = i => {
-      /*if (equals_fwd(i % DELITE_THREADS_PER_SOCKET, unit(0))) {
-        darray_numa_alloc_internal(wrapper, i.toInt)
-      }*/
-      unit(())
-    }
-  }
-
-  // performs the internal alloc called by darray_numa_alloc_internal
-  case class DeliteArrayNumaAllocInternal[A:Manifest](wrapper: Exp[DeliteArray[A]], threadIndex: Exp[Int]) extends DefWithManifest[A,Unit]
-
-  // combine internal DeliteArrays using average, performing a NUMA sync
-  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
 
   //////////////////
   // delite ops
@@ -269,8 +242,8 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   //////////////////
   // public methods
     
-  def darray_new[T:Manifest](length: Exp[Long])(implicit ctx: SourceContext) = reflectMutable(DeliteArrayNew(length,manifest[T]))
-  def darray_new_immutable[T:Manifest](length: Exp[Long])(implicit ctx: SourceContext) = reflectPure(DeliteArrayNew(length,manifest[T]))
+  def darray_new[T:Manifest](length: Exp[Long])(implicit ctx: SourceContext) = reflectMutable(DeliteArrayNew(length,manifest[T], PartitionTag("DeliteArray", false)))
+  def darray_new_immutable[T:Manifest](length: Exp[Long])(implicit ctx: SourceContext) = reflectPure(DeliteArrayNew(length,manifest[T], PartitionTag("DeliteArray", false)))
   def darray_length[T:Manifest](da: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = reflectPure(DeliteArrayLength[T](da))
   def darray_apply[T:Manifest](da: Exp[DeliteArray[T]], i: Exp[Long])(implicit ctx: SourceContext) = reflectPure(DeliteArrayApply[T](da,i))
   
@@ -330,24 +303,6 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     reflectPure(DeliteArraySortIndices(length, sV, reifyEffects(comparator(sV._1,sV._2))))
   }
 
-  /////////////////////
-  // numa-aware methods
-
-  // ghost represents number of cells to copy (+- ghost in 1-d)
-  def darray_numa_empty[T:Manifest](length: Exp[Int], ghost: Exp[Int])(implicit ctx: SourceContext) = {
-    val out = reflectMutable(DeliteArrayNumaAlloc(length, ghost))
-    reflectWrite(out)(DeliteArrayNumaInit(out, length))
-    out
-  }
-
-  def darray_numa_alloc_internal[T:Manifest](wrapper: Exp[DeliteArray[T]], threadIndex: Exp[Int])(implicit ctx: SourceContext) = {
-    reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
-  }
-
-  def darray_numa_combine_average[T:Numeric:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
-    reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper))
-  }
-
   /////////////
   // internal
   
@@ -357,6 +312,8 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   def darray_unsafe_set_act_buf[A:Manifest](da: Exp[DeliteArray[A]]) = reflectEffect(DeliteArraySetActBuffer(da))
   def darray_unsafe_get_act_size(): Exp[Long] = reflectEffect(DeliteArrayGetActSize())
 
+  def darrayManifest(typeArg: Manifest[_]) = makeManifest(classOf[DeliteArray[_]], List(typeArg))
+
 
   //////////////
   // mirroring
@@ -364,7 +321,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   override def mirror[A:Manifest](e: Def[A], f: Transformer)(implicit pos: SourceContext): Exp[A] = {
     (e match {
       case SimpleStruct(SoaTag(tag, length), elems) => struct(SoaTag(tag, f(length)), elems map { case (k,v) => (k, f(v)) })
-      case e@DeliteArrayNew(l,m) => darray_new_immutable(f(l))(m,pos)
+      case e@DeliteArrayNew(l,m,t) => darray_new_immutable(f(l))(m,pos)
       case DeliteArrayLength(a) => darray_length(f(a))
       case e@DeliteArrayApply(a,x) => darray_apply(f(a),f(x))(e.mA,pos)
       case e@DeliteArrayUpdate(l,i,r) => darray_unsafe_update(f(l),f(i),f(r))
@@ -384,7 +341,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case e@DeliteArrayFromFunction(l,g) => reflectPure(new { override val original = Some(f,e) } with DeliteArrayFromFunction(f(l),f(g))(e.dmA))(mtype(manifest[A]),implicitly[SourceContext])
       case e@DeliteArraySortIndices(l,s,c) => reflectPure(DeliteArraySortIndices(f(l), (f(s._1).asInstanceOf[Sym[Long]],f(s._2).asInstanceOf[Sym[Long]]), f(c))(e.mA))(mtype(manifest[A]),implicitly[SourceContext])
       case Reflect(SimpleStruct(SoaTag(tag, length), elems), u, es) => reflectMirrored(Reflect(SimpleStruct(SoaTag(tag, f(length)), elems map { case (k,v) => (k, f(v)) }), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
-      case Reflect(e@DeliteArrayNew(l,m), u, es) => reflectMirrored(Reflect(DeliteArrayNew(f(l),m), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNew(l,m,t), u, es) => reflectMirrored(Reflect(DeliteArrayNew(f(l),m,t), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayLength(a), u, es) => reflectMirrored(Reflect(DeliteArrayLength(f(a))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayApply(l,r), u, es) => reflectMirrored(Reflect(DeliteArrayApply(f(l),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayUpdate(l,i,r), u, es) => reflectMirrored(Reflect(DeliteArrayUpdate(f(l),f(i),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
@@ -410,10 +367,6 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@DeliteArrayGetActSize(), u, es) => reflectMirrored(Reflect(DeliteArrayGetActSize(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArraySetActBuffer(da), u, es) => reflectMirrored(Reflect(DeliteArraySetActBuffer(f(da))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayForeach(in,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayForeach(f(in),f(g))(mtype(e.mA)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
-      case Reflect(e@DeliteArrayNumaAlloc(l,g), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAlloc(f(l),f(g))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
-      case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
-      case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
-      case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case _ => super.mirror(e,f)
     }).asInstanceOf[Exp[A]]
   }
@@ -437,7 +390,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   }
 
   override def containSyms(e: Any): List[Sym[Any]] = e match {
-    case NewVar(Def(Reflect(DeliteArrayNew(_,_),_,_))) => Nil  //ignore nested mutability for Var(Array): this is only safe because we rewrite mutations on Var(Array) to atomic operations
+    case NewVar(Def(Reflect(DeliteArrayNew(_,_,_),_,_))) => Nil  //ignore nested mutability for Var(Array): this is only safe because we rewrite mutations on Var(Array) to atomic operations
     case DeliteArrayCopy(s,sp,d,dp,l) => Nil
     case _ => super.containSyms(e)
   }
@@ -593,8 +546,6 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
     case _ => super.darray_new_immutable(length)
   }
 
-  def darrayManifest(typeArg: Manifest[_]) = makeManifest(classOf[DeliteArray[_]], List(typeArg))
-
   def deliteArrayPure[T:Manifest](da: Exp[DeliteArray[T]], elems: RefinedManifest[T])(implicit ctx: SourceContext): Exp[DeliteArray[T]] = {
     if (Config.soaEnabled)
       struct[DeliteArray[T]](SoaTag(AnonTag(elems),da.length), elems.fields.map(e=>(e._1, field[DeliteArray[_]](da,e._1)(darrayManifest(e._2),ctx))))
@@ -646,26 +597,27 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
   }
   
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
-    case a@DeliteArrayNew(n,m) if Config.generateSerializable && isPrimitiveType(m) =>
+    case a@DeliteArrayNew(n,m,t) if Config.generateSerializable && isPrimitiveType(m) =>
       emitValDef(sym, "new ppl.delite.runtime.data.LocalDeliteArray" + remap(m) + "(" + quote(n) + ")")
       if (Config.enableProfiler) emitLogOfArrayAllocation(sym.id, n, m.erasure.getSimpleName)
-    case a@DeliteArrayNew(n,m) if Config.generateSerializable =>
+    case a@DeliteArrayNew(n,m,t) if Config.generateSerializable =>
       emitValDef(sym, "new ppl.delite.runtime.data.LocalDeliteArrayObject[" + remap(m) + "](" + quote(n) + ")")
       if (Config.enableProfiler) emitLogOfArrayAllocation(sym.id, n, m.erasure.getSimpleName)
-    case a@DeliteArrayNew(n,m) =>
+    case a@DeliteArrayNew(n,m,t) =>
+      if (t.partition) stream.println("//partitioned array follows")
       stream.println("if (" + quote(n) + " > Int.MaxValue) throw new RuntimeException(\"Allocation size too large for 32-bit runtime\")")
-      emitValDef(sym, "new Array[" + remap(m) + "](" + quote(n) + ".asInstanceOf[Int])")
+      emitValDef(sym, "new Array[" + remap(m) + "](" + quote(n) + ".toInt)")
       if (Config.enableProfiler) emitLogOfArrayAllocation(sym.id, n, m.erasure.getSimpleName)
     case DeliteArrayLength(da) =>
       emitValDef(sym, quote(da) + ".length")
     case DeliteArrayApply(da, idx) =>
-      emitValDef(sym, quote(da) + "(" + quote(idx) + ".asInstanceOf[Int])")
+      emitValDef(sym, quote(da) + "(" + quote(idx) + ".toInt)")
     case DeliteArrayUpdate(da, idx, x) =>
-      emitValDef(sym, quote(da) + "(" + quote(idx) + ".asInstanceOf[Int]) = " + quote(x))
+      emitValDef(sym, quote(da) + "(" + quote(idx) + ".toInt) = " + quote(x))
     case DeliteArrayCopy(src,srcPos,dest,destPos,len) if Config.generateSerializable =>
       emitValDef(sym, quote(src) + ".copy(" + quote(srcPos) + "," + quote(dest) + "," + quote(destPos) + "," + quote(len) + ")")
     case DeliteArrayCopy(src,srcPos,dest,destPos,len) =>
-      emitValDef(sym, "System.arraycopy(" + quote(src) + "," + quote(srcPos) + ".asInstanceOf[Int]," + quote(dest) + "," + quote(destPos) + ".asInstanceOf[Int]," + quote(len) + ".asInstanceOf[Int])")
+      emitValDef(sym, "System.arraycopy(" + quote(src) + "," + quote(srcPos) + ".toInt," + quote(dest) + "," + quote(destPos) + ".toInt," + quote(len) + ".toInt)")
     case DeliteArrayTake(lhs,n) =>
       emitValDef(sym, quote(lhs) + ".take(" + quote(n) + ")")
     case DeliteArrayMkString(da,x) if !Config.generateSerializable =>
@@ -683,7 +635,7 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
       stream.println("}")
     case a@DeliteArraySortIndices(len,sV,comp) if !Config.generateSerializable =>
       stream.println("val " + quote(sym) + " = {")
-      stream.println("val len = " + quote(len) + ".asInstanceOf[Int]")
+      stream.println("val len = " + quote(len) + ".toInt")
       stream.println("val comp = new generated.scala.container.Comparator {")
       stream.println("def compare(o1: Long, o2: Long): Int = {")
       emitValDef(sV._1, "o1")
@@ -699,22 +651,22 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
     case DeliteArrayToSeq(a) if !Config.generateSerializable =>
       emitValDef(sym, quote(a) + ".toSeq")
     case StructUpdate(struct, fields, idx, x) =>
-      emitValDef(sym, quote(struct) + "." + fields.mkString(".") + idx.map(e=>"("+quote(e)+".asInstanceOf[Int])").mkString("") + " = " + quote(x))
+      emitValDef(sym, quote(struct) + "." + fields.mkString(".") + idx.map(e=>"("+quote(e)+".toInt)").mkString("") + " = " + quote(x))
     case VarUpdate(Variable(a), idx, x) =>
       val readVar = if (deliteInputs contains a) ".get" else ""
-      emitValDef(sym, quote(a) + readVar + "(" + quote(idx) + ".asInstanceOf[Int]) = " + quote(x))
+      emitValDef(sym, quote(a) + readVar + "(" + quote(idx) + ".toInt) = " + quote(x))
     case StructCopy(src,srcPos,struct,fields,destPos,len) if Config.generateSerializable =>
       val dest = quote(struct) + "." + fields.mkString(".") + destPos.take(destPos.length-1).map(e=>"("+quote(e)+")").mkString("")
       emitValDef(sym, quote(src) + ".copy(" + quote(srcPos) + "," + dest + "," + quote(destPos(destPos.length-1)) + "," + quote(len) + ")")
     case StructCopy(src,srcPos,struct,fields,destPos,len) =>
-      val dest = quote(struct) + "." + fields.mkString(".") + destPos.take(destPos.length-1).map(e=>"("+quote(e)+".asInstanceOf[Int])").mkString("")
-      emitValDef(sym, "System.arraycopy(" + quote(src) + "," + quote(srcPos) + ".asInstanceOf[Int]," + dest + "," + quote(destPos(destPos.length-1)) + ".asInstanceOf[Int]," + quote(len) + ".asInstanceOf[Int])")
+      val dest = quote(struct) + "." + fields.mkString(".") + destPos.take(destPos.length-1).map(e=>"("+quote(e)+".toInt)").mkString("")
+      emitValDef(sym, "System.arraycopy(" + quote(src) + "," + quote(srcPos) + ".toInt," + dest + "," + quote(destPos(destPos.length-1)) + ".toInt," + quote(len) + ".toInt)")
     case VarCopy(src,srcPos,Variable(a),destPos,len) if Config.generateSerializable =>
       val dest = quote(a) + (if (deliteInputs contains a) ".get" else "")
       emitValDef(sym, quote(src) + ".copy(" + quote(srcPos) + "," + dest + "," + quote(destPos) + "," + quote(len) + ")")
     case VarCopy(src,srcPos,Variable(a),destPos,len) =>
       val dest = quote(a) + (if (deliteInputs contains a) ".get" else "")
-      emitValDef(sym, "System.arraycopy(" + quote(src) + "," + quote(srcPos) + ".asInstanceOf[Int]," + dest + "," + quote(destPos) + ".asInstanceOf[Int]," + quote(len) + ".asInstanceOf[Int])")
+      emitValDef(sym, "System.arraycopy(" + quote(src) + "," + quote(srcPos) + ".toInt," + dest + "," + quote(destPos) + ".toInt," + quote(len) + ".toInt)")
     case DeliteArrayGetActSize() =>
       emitValDef(sym, getActSize)
     case DeliteArraySetActBuffer(da) =>
@@ -821,7 +773,7 @@ trait CudaGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CudaGenFat with 
   import IR._
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
-    case a@DeliteArrayNew(n,m) =>
+    case a@DeliteArrayNew(n,m,t) =>
       // If isNestedNode, each thread allocates its own DeliteArray (TODO: Check the allocation does not escape the kernel)
       if(isNestedNode) {
         // If size is known before launching the kernel (same size for all the threads), allocate outside the kernel
@@ -965,7 +917,7 @@ trait OpenCLGenDeliteArrayOps extends CLikeGenDeliteArrayOps with OpenCLGenFat w
   import IR._
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
-    case a@DeliteArrayNew(n,m) =>
+    case a@DeliteArrayNew(n,m,t) =>
       emitValDef(sym, "new Array[" + remap(m) + "](" + quote(n) + ")")
     case DeliteArrayLength(da) =>
       emitValDef(sym, remap(da.tp) + "_size(" + quote(da) + ")")
@@ -985,28 +937,13 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
   import IR._
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
-    case a@DeliteArrayNew(n,m) => 
+    case a@DeliteArrayNew(n,m,t) => 
       // NOTE: DSL operations should not rely on the fact that JVM initializes arrays with 0
       stream.println("assert(" + quote(n) + " < (size_t)-1);")
       if (cppMemMgr == "refcnt")  
         stream.println(remap(sym.tp) + " " + quote(sym) + "(new " + unwrapSharedPtr(remap(sym.tp)) + "(" + quote(n) + "), " + unwrapSharedPtr(remap(sym.tp)) + "D());")
       else
         emitValDef(sym, "new " + remap(sym.tp) + "(" + quote(n) + ")")
-
-    // NUMA-aware
-    case a@DeliteArrayNumaAlloc(len, numGhostCells) =>
-      emitValDef(sym, "new cppDeliteArrayNuma<"+remap(a.mA) + addRef(a.mA)+">("+quote(len)+","+quote(numGhostCells)+");")
-    case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
-      stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
-    case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
-      // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
-      emitValDef(sym, quote(da) + "->applyAt(__act->tid, " + quote(idx) + ");")
-    case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
-      // this will only work if we are in the context of a multiloop!
-      stream.println(quote(da) + "->updateAt(__act->tid, " + quote(idx) + ", " + quote(x) + ");")
-    case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
-    // --
-
     case DeliteArrayLength(da) =>
       emitValDef(sym, quote(da) + "->length")
     case DeliteArrayApply(da, idx) =>
@@ -1044,32 +981,38 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
 
   protected val deliteArrayString = """
 using namespace std;
-class __T__ {
+class __T__Base {
+public:
+  size_t length;
+  virtual __TARG__ apply(size_t idx) =0;
+  virtual void update(size_t idx, __TARG__ val) =0;
+};
+
+class __T__: public __T__Base {
 public:
   __TARG__ *data;
-  int length;
 
-  __T__(int _length) {
+  __T__(size_t _length) {
     data = new __TARG__[_length]();
     length = _length;
-    //printf("allocated __T__, size %d, %p\n",_length,this);
+    //printf("allocated __T__, size %lu, %p\n",_length,this);
   }
 
-  __T__(__TARG__ *_data, int _length) {
+  __T__(__TARG__ *_data, size_t _length) {
     data = _data;
     length = _length;
   }
 
-  __TARG__ apply(int idx) {
+  __TARG__ apply(size_t idx) {
     return data[idx];
   }
 
-  void update(int idx, __TARG__ val) {
+  void update(size_t idx, __TARG__ val) {
     data[idx] = val;
   }
 
   void print(void) {
-    printf("length is %d\n", length);
+    printf("length is %lu\n", length);
   }
 };
 
@@ -1080,5 +1023,57 @@ struct __T__D {
   }
 };
 
+class __T__Numa: public __T__Base {
+public:
+  __TARG__ **wrapper;
+  size_t numGhostCells; // constant for all internal arrays
+  size_t *starts;
+  size_t *ends;
+  size_t numChunks;
+
+  __T__Numa(size_t _length, size_t _numGhostCells, size_t _numChunks) {
+    length = _length;
+    numGhostCells = _numGhostCells;
+    numChunks = _numChunks;
+    wrapper = (__TARG__ **)malloc(numChunks*sizeof(__TARG__*));
+    starts = (size_t *)malloc(numChunks*sizeof(size_t)); //TODO: custom partitioning
+    ends = (size_t *)malloc(numChunks*sizeof(size_t));
+    for (int sid = 0; sid < numChunks; sid++) {
+      starts[sid] = max(length * sid / numChunks - numGhostCells, (size_t)0);
+      ends[sid] = min(length * (sid+1) / numChunks + numGhostCells, length);
+      allocInternal(sid, ends[sid]-starts[sid]);
+    }
+  }
+
+  void allocInternal(int socketId, size_t length) {
+    wrapper[socketId] = (__TARG__*)malloc(length*sizeof(__TARG__));
+    //bitmask* nodemask = numa_get_membind();
+    //printf("allocating for socket %d, allowed: %d, %d, %d, %d\n", socketId, numa_bitmask_isbitset(nodemask, 0), numa_bitmask_isbitset(nodemask, 1), numa_bitmask_isbitset(nodemask, 2), numa_bitmask_isbitset(nodemask, 3));
+    //wrapper[socketId] = (__TARG__*)numa_alloc_onnode(length*sizeof(__TARG__), socketId);
+  }
+
+  __TARG__ apply(size_t idx) {
+    for (size_t sid = 0; sid < numChunks; sid++) {
+      if (idx < ends[sid]) return wrapper[sid][idx-starts[sid]]; //read from first location found
+    }
+    assert(false);
+  }
+
+  void update(size_t idx, __TARG__ value) {
+    for (size_t sid = 0; sid < numChunks; sid++) {
+      size_t offset = starts[sid];
+      if (idx >= offset && idx < ends[sid]) wrapper[sid][idx-offset] = value; //update all ghosts
+    }
+  }
+
+  __TARG__ applyAt(size_t socketId, size_t idx) {
+    return wrapper[socketId][idx];
+  }
+
+  void updateAt(size_t socketId, size_t idx, __TARG__ value) {
+    wrapper[socketId][idx] = value;
+  }
+
+};
 """
 }
