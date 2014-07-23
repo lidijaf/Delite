@@ -38,20 +38,21 @@ trait DistributedArrayTransformer extends ForwardPassTransformer {
       case TP(s, DeliteArrayApply(arr,idx)) => symIsPartitioned(arr)
       //case TP(s, DeliteFileStreamReadLine(stream,idx)) => symIsPartitioned(stream)
       //do we want to mach on specific nodes (above) or all nodes that consume a sym of the right type (below)?
-      case TP(s,d) if syms(d).exists(_.tp == manifest[DeliteFileStream]) => symIsPartitioned(syms(d).filter(_.tp == manifest[DeliteFileStream])(0))
+      case TP(s,d) if syms(d).exists(_.tp == manifest[DeliteFileStream]) => syms(d).filter(_.tp == manifest[DeliteFileStream]).exists(symIsPartitioned)
       case _ => false
     })
 
-    def setPartitioned(e: Exp[Any]) = e match {
-      case Partitionable(t) => Console.println("partitioning " + e.toString); t.partition = true
-      case Def(x) => throw new RuntimeException("tried to set " + x.toString + " as partitioned by no PartitionTag exists")
-      case _ => throw new RuntimeException("tried to set " + e.toString + " as partitioned")
+    def setPartitioned(e: Exp[Any]): Unit = e match {
+      case Def(Struct(_,elems)) => elems.foreach(e => setPartitioned(e._2)) //partition every array in struct (?)
+      case Partitionable(t) => t.partition = true
+      case _ => Console.println("WARNING: tried to partition " + e.toString)
     }
 
     if (inputIsPartitioned) {
       checkAccessStencil(sym,d)
       d match {
-        case Loop(_,_,_:DeliteCollectElem[_,_,_]) => setPartitioned(sym)
+        case Loop(_,_,body:DeliteCollectElem[_,_,_]) if body.par == ParFlat => Console.println("partitoning " + d.toString); setPartitioned(getBlockResult(body.buf.alloc))
+        case Loop(_,_,body:DeliteCollectElem[_,_,_]) => Console.println("partitoning " + d.toString); setPartitioned(getBlockResult(body.buf.allocRaw))
         case _ => //other loop types (Reduce) will produce result on master
       }
     } else {
@@ -81,9 +82,6 @@ trait DistributedArrayTransformer extends ForwardPassTransformer {
   def unapplyPartionable[T](e: Exp[_]): Option[PartitionTag[_]] = e match {
     case Def(DeliteArrayNew(_,_,tag)) => Some(tag)
     case Def(Reflect(DeliteArrayNew(_,_,tag),_,_)) => Some(tag)
-    case Def(Loop(_,_,body:DeliteCollectElem[_,_,_])) if body.par == ParFlat => unapplyPartionable(getBlockResult(body.buf.alloc))
-    case Def(Loop(_,_,body:DeliteCollectElem[_,_,_])) => unapplyPartionable(getBlockResult(body.buf.allocRaw))
-    //case Def(a) => println("Found: " + a.toString); None //TODO: handle struct return type
     case _ => None
   }
 
