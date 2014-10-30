@@ -142,6 +142,8 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   // combine internal DeliteArrays using average, performing a NUMA sync
   case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
 
+  case class DeliteArrayNumaInitialSynch[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
+
 
   //////////////////
   // delite ops
@@ -353,6 +355,10 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper))
   }
 
+  def darray_numa_initial_synch[T:Numeric:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaInitialSynch(wrapper))
+  }
+
   /////////////
   // internal
   
@@ -420,6 +426,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
       case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
       case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
+      case Reflect(e@DeliteArrayNumaInitialSynch(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInitialSynch(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
       case _ => super.mirror(e,f)
     }).asInstanceOf[Exp[A]] // why??
   }
@@ -1022,6 +1029,7 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
       // this will only work if we are in the context of a multiloop!
       stream.println(quote(da) + "->updateAt(__act->tid, " + quote(idx) + ", " + quote(x) + ");")
     case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
+    case DeliteArrayNumaInitialSynch(x) => stream.println(quote(x) + "->initialSynch();")
     // --
 
     case a@DeliteArrayNew(n,m) => 

@@ -19,7 +19,7 @@ public:
     cppDeliteArrayNuma(int _length, int _numGhostCells) {
         length = _length;
         numGhostCells = _numGhostCells;
-	avg = (T *)malloc(numGhostCells*sizeof(T));
+	      avg = (T *)malloc(numGhostCells*sizeof(T));
         wrapper = (T **)malloc(config->numSockets*sizeof(T*));
     }
 
@@ -83,6 +83,27 @@ public:
 	for (int i = start; i < numGhostCells+start; i++) {
 	  wrapper[s][i] = avg[i-start];
 	}        
+      }
+    }
+
+    //Used to make sure every thread see the same data
+    //Only work when numGhostCells=length
+    //Whne numGhostCells=0, no nee to call this function
+    void initialSynch() {
+      memset(avg, 0, numGhostCells*sizeof(T));
+      int start = 0;
+      int numActiveSockets = config->activeSockets();
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          if (avg[i] == 0 && wrapper[s][i] != 0) {
+            avg[i] = wrapper[s][i];
+          }
+        }
+      }
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          wrapper[s][i] = avg[i];
+        }
       }
     }
 
