@@ -4110,6 +4110,7 @@ trait CGenDeliteOps extends CGenLoopsFat with GenericGenDeliteOps {
     stream.println("#ifndef __" + name + "__")
     stream.println("#define __" + name + "__")
     stream.println("#include \"" + deviceTarget + "helperFuncs.h\"")
+    stream.println("#include \"Config.h\"")
     stream.println("class " + name + " {")
     stream.println("public:")
     body

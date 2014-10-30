@@ -15,8 +15,11 @@
 #include <map>
 #include <sstream>
 #include "cppDeliteArraystring.h"
+#include "Config.h"
 #include "DeliteNamespaces.h"
 #include "DeliteDatastructures.h"
+
+extern Config *config;
 
 /* helper methods and data structures only required for execution with Delite */
 #ifndef __DELITE_CPP_STANDALONE__

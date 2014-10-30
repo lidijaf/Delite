@@ -11,8 +11,9 @@ import scala.collection.mutable.HashSet
 
 
 trait DeliteArray[T] extends DeliteCollection[T] 
+trait DeliteArrayNuma[T] extends DeliteArray[T]
 
-trait DeliteArrayOps extends StringOps {
+trait DeliteArrayOps extends RuntimeServiceOps with StringOps {
   
   object DeliteArray {
     def apply[T:Manifest](length: Rep[Int])(implicit ctx: SourceContext) = darray_new(length)
@@ -78,7 +79,7 @@ trait DeliteArrayCompilerOps extends DeliteArrayOps {
   def darray_unsafe_copy[T:Manifest](src: Rep[DeliteArray[T]], srcPos: Rep[Int], dest: Rep[DeliteArray[T]], destPos: Rep[Int], len: Rep[Int])(implicit ctx: SourceContext): Rep[Unit]
 }
 
-trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTags with DeliteCollectionOpsExp with DeliteStructsExp with EffectExp with PrimitiveOpsExp {
+trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTags with DeliteCollectionOpsExp with DeliteStructsExp with RuntimeServiceOpsExp with EffectExp with PrimitiveOpsExp {
   this: DeliteOpsExp with DeliteMapOpsExp =>
   
   //////////////////
@@ -110,6 +111,37 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   // switched because of a NoSuchMethodError problem when matching on the case object in other traits..
   // case object DeliteArrayGetActSize extends Def[Int]
   case class DeliteArrayGetActSize() extends Def[Int]
+
+  //////////////////
+  // NUMA ops
+
+  // allocates an empty DeliteArrayNuma wrapper
+  // 'ghost' refers to the number of overlapping cells to be allocated at each socket
+  // TODO: investigate - does using DeliteArrayNuma break other optimizations (e.g. SoA)?
+  case class DeliteArrayNumaAlloc[A:Manifest](logicalLength: Exp[Int], ghost: Exp[Int]) extends DefWithManifest[A,DeliteArrayNuma[A]]
+
+  // initializes DeliteArrayNumaWrapper with concrete DeliteArrays
+  // this method is locality-aware, since 1 thread pinned to each socket allocates the corresponding array for that socket
+  case class DeliteArrayNumaInit[A:Manifest](wrapper: Exp[DeliteArray[A]], length: Exp[Int]) extends DeliteOpIndexedLoop {
+    val mA = manifest[A]
+    val size = copyTransformedOrElse(_.size)(DELITE_NUM_THREADS)
+
+    def func = i => {
+      if (equals_fwd(i % DELITE_THREADS_PER_SOCKET, unit(0))) {
+        if (i / DELITE_THREADS_PER_SOCKET < DELITE_NUM_SOCKETS) {
+          darray_numa_alloc_internal(wrapper, i)
+        }
+      }
+      unit(())
+    }
+  }
+
+  // performs the internal alloc called by darray_numa_alloc_internal
+  case class DeliteArrayNumaAllocInternal[A:Manifest](wrapper: Exp[DeliteArray[A]], threadIndex: Exp[Int]) extends DefWithManifest[A,Unit]
+
+  // combine internal DeliteArrays using average, performing a NUMA sync
+  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
+
 
   //////////////////
   // delite ops
@@ -303,6 +335,24 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     reflectPure(DeliteArraySortIndices(length, sV, reifyEffects(comparator(sV._1,sV._2))))
   }
 
+  /////////////////////
+  // numa-aware methods
+
+  // ghost represents number of cells to copy (+- ghost in 1-d)
+  def darray_numa_empty[T:Manifest](length: Exp[Int], ghost: Exp[Int])(implicit ctx: SourceContext) = {
+    val out = reflectMutable(DeliteArrayNumaAlloc(length, ghost))
+    reflectWrite(out)(DeliteArrayNumaInit(out, length))
+    out
+  }
+
+  def darray_numa_alloc_internal[T:Manifest](wrapper: Exp[DeliteArray[T]], threadIndex: Exp[Int])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
+  }
+
+  def darray_numa_combine_average[T:Numeric:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper))
+  }
+
   /////////////
   // internal
   
@@ -365,6 +415,11 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@DeliteArrayGetActSize(), u, es) => reflectMirrored(Reflect(DeliteArrayGetActSize(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArraySetActBuffer(da), u, es) => reflectMirrored(Reflect(DeliteArraySetActBuffer(f(da))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayForeach(in,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayForeach(f(in),f(g))(mtype(e.mA)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      
+      case Reflect(e@DeliteArrayNumaAlloc(l,g), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAlloc(f(l),f(g))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
+      case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
+      case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
+      case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]))
       case _ => super.mirror(e,f)
     }).asInstanceOf[Exp[A]] // why??
   }
@@ -680,6 +735,7 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
       case arg if Config.generateSerializable => "ppl.delite.runtime.data.DeliteArrayObject[" + remap(arg) + "]"
       case arg => "Array[" + remap(arg) + "]"
     }
+    case "DeliteArrayNuma" => throw new GenerationFailedException("ScalaGen: Type DeliteArrayNuma cannot be remapped.")
     case _ => super.remap(m)
   }
 
@@ -698,6 +754,14 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case arg => deviceTarget + "DeliteArray" + remap(arg)
       }
     }
+    else if (m.erasure.getSimpleName == "DeliteArrayNuma") {
+      m.typeArguments.head match {
+        case StructType(_,_) if Config.soaEnabled => super.remap(m)
+        case s if s <:< manifest[Record] && Config.soaEnabled => super.remap(m) // occurs due to restaging
+        case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(deviceTarget + "DeliteArrayNuma" + unwrapSharedPtr(remap(arg)))
+        case arg => deviceTarget + "DeliteArrayNuma" + remap(arg)
+      }
+    }
     else
       super.remap(m)
   }
@@ -709,6 +773,14 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remapHost(m)
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(hostTarget + "DeliteArray" + unwrapSharedPtr(remapHost(arg)))
         case arg => hostTarget + "DeliteArray" + remapHost(arg)
+      }
+    }
+    else if (m.erasure.getSimpleName == "DeliteArrayNuma") {
+      m.typeArguments.head match {
+        case StructType(_,_) if Config.soaEnabled => super.remapHost(m)
+        case s if s <:< manifest[Record] && Config.soaEnabled => super.remapHost(m)
+        case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(hostTarget + "DeliteArrayNuma" + unwrapSharedPtr(remapHost(arg)))
+        case arg => hostTarget + "DeliteArrayNuma" + remapHost(arg)
       }
     }
     else
@@ -762,6 +834,9 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
     val out = new StringBuilder
     out.append("#include \"" + deviceTarget + "DeliteArrays.h\"\n")
     if (isAcceleratorTarget) out.append("#include \"" + hostTarget + "DeliteArrays.h\"\n")
+    if (deviceTarget == scala.virtualization.lms.internal.Targets.Cpp) {
+      out.append("#include \"cppDeliteArrayNuma.h\"\n")
+    }
     super.getDataStructureHeaders() + out.toString
   }
 }
@@ -930,11 +1005,25 @@ trait OpenCLGenDeliteArrayOps extends CLikeGenDeliteArrayOps with OpenCLGenFat w
 
 }
 
-trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct with CGenDeliteOps {
+trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct with CGenDeliteOps with CGenRuntimeServiceOps {
   val IR: DeliteArrayFatExp with DeliteOpsExp
   import IR._
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    // NUMA-aware
+    case a@DeliteArrayNumaAlloc(len, numGhostCells) =>
+      emitValDef(sym, "new cppDeliteArrayNuma<"+remap(a.mA) + addRef(a.mA)+">("+quote(len)+","+quote(numGhostCells)+");")
+    case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
+      stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
+    case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
+      // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
+      emitValDef(sym, quote(da) + "->applyAt(__act->tid, " + quote(idx) + ");")
+    case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
+      // this will only work if we are in the context of a multiloop!
+      stream.println(quote(da) + "->updateAt(__act->tid, " + quote(idx) + ", " + quote(x) + ");")
+    case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
+    // --
+
     case a@DeliteArrayNew(n,m) => 
       // NOTE: DSL operations should not rely on the fact that JVM initializes arrays with 0
       if (cppMemMgr == "refcnt")  
