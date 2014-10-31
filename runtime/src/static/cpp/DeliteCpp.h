@@ -18,6 +18,7 @@
 #include "Config.h"
 #include "DeliteNamespaces.h"
 #include "DeliteDatastructures.h"
+#include "DeliteCppProfiler.h"
 
 extern Config *config;
 
