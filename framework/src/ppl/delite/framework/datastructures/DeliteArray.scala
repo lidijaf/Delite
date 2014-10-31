@@ -127,7 +127,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     val size = copyTransformedOrElse(_.size)(DELITE_NUM_THREADS)
 
     def func = i => {
-      if (i % DELITE_THREADS_PER_SOCKET == 0) {
+      if (i % DELITE_THREADS_PER_SOCKET == unit(0)) {
         if (i / DELITE_THREADS_PER_SOCKET < DELITE_NUM_SOCKETS) {
           darray_numa_alloc_internal(wrapper, i)
         }
