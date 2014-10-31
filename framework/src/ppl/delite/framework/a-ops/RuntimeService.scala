@@ -34,9 +34,9 @@ trait RuntimeServiceOpsExp extends RuntimeServiceOps with EffectExp {
     case RuntimeQueryNumSockets() => runtime_query_numsockets()(pos)
     case RuntimeQueryThreadsPerSocket() => runtime_query_threadspersocket()(pos)
 
-    case Reflect(RuntimeQueryNumThreads(), u, es) => reflectMirrored(Reflect(RuntimeQueryNumThreads(), mapOver(f,u), f(es)))(mtype(manifest[A]))
-    case Reflect(RuntimeQueryNumSockets(), u, es) => reflectMirrored(Reflect(RuntimeQueryNumSockets(), mapOver(f,u), f(es)))(mtype(manifest[A]))
-    case Reflect(RuntimeQueryThreadsPerSocket(), u, es) => reflectMirrored(Reflect(RuntimeQueryThreadsPerSocket(), mapOver(f,u), f(es)))(mtype(manifest[A]))
+    case Reflect(RuntimeQueryNumThreads(), u, es) => reflectMirrored(Reflect(RuntimeQueryNumThreads(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+    case Reflect(RuntimeQueryNumSockets(), u, es) => reflectMirrored(Reflect(RuntimeQueryNumSockets(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+    case Reflect(RuntimeQueryThreadsPerSocket(), u, es) => reflectMirrored(Reflect(RuntimeQueryThreadsPerSocket(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case _ => super.mirror(e,f)
   }).asInstanceOf[Exp[A]]
 }
