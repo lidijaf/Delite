@@ -127,7 +127,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     val size = copyTransformedOrElse(_.size)(DELITE_NUM_THREADS)
 
     def func = i => {
-      if (i % DELITE_THREADS_PER_SOCKET == 0) {
+      if (i % DELITE_THREADS_PER_SOCKET == unit(0)) {
         if (i / DELITE_THREADS_PER_SOCKET < DELITE_NUM_SOCKETS) {
           darray_numa_alloc_internal(wrapper, i)
         }
@@ -351,11 +351,11 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
   }
 
-  def darray_numa_combine_average[T:Numeric:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
+  def darray_numa_combine_average[T:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
     reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper))
   }
 
-  def darray_numa_initial_synch[T:Numeric:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
+  def darray_numa_initial_synch[T:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
     reflectWrite(wrapper)(DeliteArrayNumaInitialSynch(wrapper))
   }
 
@@ -658,6 +658,21 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
   }
   
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    // NUMA dummy, cannot work in scala
+    case a@DeliteArrayNumaAlloc(len, numGhostCells) =>
+      stream.println("println(\"NUMA-aware don't work in scala\")")
+    case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
+      stream.println("println(\"NUMA-aware don't work in scala\")")
+    case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
+      // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
+      stream.println("println(\"NUMA-aware don't work in scala\")")
+    case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
+      // this will only work if we are in the context of a multiloop!
+      stream.println("println(\"NUMA-aware don't work in scala\")")
+    case DeliteArrayNumaCombineAverage(x) => stream.println("println(\"NUMA-aware don't work in scala\")")
+    case DeliteArrayNumaInitialSynch(x) => stream.println("println(\"NUMA-aware don't work in scala\")")
+    // --
+
     case a@DeliteArrayNew(n,m) if Config.generateSerializable && isPrimitiveType(m) => 
       emitValDef(sym, "new ppl.delite.runtime.data.LocalDeliteArray" + remap(m) + "(" + quote(n) + ")")
       if (Config.enableProfiler) emitLogOfArrayAllocation(sym.id, n, m.erasure.getSimpleName)

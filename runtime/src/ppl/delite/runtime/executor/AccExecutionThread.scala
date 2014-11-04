@@ -19,9 +19,11 @@ class AccExecutionThread(deviceNum: Int) extends ExecutionThread {
   override def run {
     if (deviceNum >= Config.numCpp)
       initializeDevice(deviceNum)
+    else initializeThread(deviceNum, Config.numCpp)
     super.run
   }
 
+  @native def initializeThread(threadId: Int, numThreads:Int): Unit
   @native def initializeDevice(deviceNum: Int): Unit
 
   loadSlave()

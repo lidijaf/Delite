@@ -79,9 +79,9 @@ void initializeConfig(int numThreads) {
 }
 
 
-extern "C" JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_NativeExecutionThread_initializeThread(JNIEnv* env, jobject obj, jint threadId, jint numThreads);
+extern "C" JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_initializeThread(JNIEnv* env, jobject obj, jint threadId, jint numThreads);
 
-JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_NativeExecutionThread_initializeThread(JNIEnv* env, jobject obj, jint threadId, jint numThreads) {
+JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_initializeThread(JNIEnv* env, jobject obj, jint threadId, jint numThreads) {
   pthread_mutex_lock(&init_mtx); 
   if (!config) initializeConfig(numThreads);
   pthread_mutex_unlock(&init_mtx);
@@ -110,9 +110,9 @@ JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_NativeExecutionThread_in
   #endif
 }
 
-extern "C" JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_NativeExecutionThread_entry(JNIEnv* env, jobject obj);
+extern "C" JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_entry(JNIEnv* env, jobject obj);
 
-JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_NativeExecutionThread_entry(JNIEnv* env, jobject obj) {
+JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_entry(JNIEnv* env, jobject obj) {
   printf("[delite]: %p\n", pthread_self());
 
   pthread_mutex_lock(&init_mtx);
