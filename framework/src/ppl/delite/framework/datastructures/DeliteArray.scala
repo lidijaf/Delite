@@ -74,7 +74,7 @@ trait DeliteArrayOps extends RuntimeServiceOps with StringOps {
   def darray_set_act_buf[A:Manifest](da: Rep[DeliteArray[A]]): Rep[Unit]
 }
 
-trait DeliteArrayCompilerOps extends DeliteArrayOps {
+trait DeliteArrayCompilerOps extends DeliteArrayOps with RuntimeServiceOps{
   def darray_unsafe_update[T:Manifest](x: Rep[DeliteArray[T]], n: Rep[Int], y: Rep[T])(implicit ctx: SourceContext): Rep[Unit]
   def darray_unsafe_copy[T:Manifest](src: Rep[DeliteArray[T]], srcPos: Rep[Int], dest: Rep[DeliteArray[T]], destPos: Rep[Int], len: Rep[Int])(implicit ctx: SourceContext): Rep[Unit]
 }
@@ -649,7 +649,7 @@ trait BaseGenDeliteArrayOps extends GenericFatCodegen {
 
 }
 
-trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteStruct with ScalaGenDeliteOps {
+trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteStruct with ScalaGenDeliteOps with ScalaGenRuntimeServiceOps {
   val IR: DeliteArrayFatExp with DeliteOpsExp
   import IR._
 
@@ -757,7 +757,7 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
       case arg if Config.generateSerializable => "ppl.delite.runtime.data.DeliteArrayObject[" + remap(arg) + "]"
       case arg => "Array[" + remap(arg) + "]"
     }
-    case "DeliteArrayNuma" => throw new GenerationFailedException("ScalaGen: Type DeliteArrayNuma cannot be remapped.")
+    //case "DeliteArrayNuma" => throw new GenerationFailedException("ScalaGen: Type DeliteArrayNuma cannot be remapped.")
     case _ => super.remap(m)
   }
 
@@ -781,7 +781,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case StructType(_,_) if Config.soaEnabled => super.remap(m)
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remap(m) // occurs due to restaging
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(deviceTarget + "DeliteArrayNuma" + unwrapSharedPtr(remap(arg)))
-        case arg => deviceTarget + "DeliteArrayNuma" + remap(arg)
+        case arg => deviceTarget + "DeliteArrayNuma< " + remap(arg) + addRef(arg) + " >"
       }
     }
     else
@@ -802,7 +802,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case StructType(_,_) if Config.soaEnabled => super.remapHost(m)
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remapHost(m)
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(hostTarget + "DeliteArrayNuma" + unwrapSharedPtr(remapHost(arg)))
-        case arg => hostTarget + "DeliteArrayNuma" + remapHost(arg)
+        case arg => hostTarget + "DeliteArrayNuma< " + remap(arg) + addRef(arg) + " >"
       }
     }
     else
@@ -1039,10 +1039,10 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
       stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
     case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
       // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
-      emitValDef(sym, quote(da) + "->applyAt(__act->tid, " + quote(idx) + ");")
+      emitValDef(sym, quote(da) + "->applyAt(" + resourceInfoSym + ".thread_id, " + quote(idx) + ");")
     case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
       // this will only work if we are in the context of a multiloop!
-      stream.println(quote(da) + "->updateAt(__act->tid, " + quote(idx) + ", " + quote(x) + ");")
+      stream.println(quote(da) + "->updateAt(" + resourceInfoSym + ".thread_id, " + quote(idx) + ", " + quote(x) + ");")
     case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
     case DeliteArrayNumaInitialSynch(x) => stream.println(quote(x) + "->initialSynch();")
     // --

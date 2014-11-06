@@ -2,7 +2,7 @@ package ppl.delite.runtime.executor
 
 import ppl.delite.runtime.Config
 import ppl.delite.runtime.graph.targets.OS
-import ppl.delite.runtime.codegen.{CCompile, CudaCompile, OpenCLCompile}
+import ppl.delite.runtime.codegen.{CCompile, CppCompile, CudaCompile, OpenCLCompile}
 import java.io.File
 
 /**
@@ -32,13 +32,26 @@ class AccExecutionThread(deviceNum: Int) extends ExecutionThread {
   private def loadSlave() {
     def loadGPU(target: String, compiler: CCompile) = {
       val sep = File.separator
+      val root = compiler.staticResources + target + "Init"
       val path = compiler.staticResources + target + "Init." + OS.libExt
       val lib = new File(path)
       if (!lib.exists)
-        compiler.compileInit()
+        compiler.compileInit(root)
       System.load(path)
     }
 
+    def loadNative(fileName: String, compiler: CCompile) = {
+      val sep = File.separator
+      val root = compiler.staticResources + fileName
+      val path = root + "." + OS.libExt
+      val lib = new File(path)
+      if (!lib.exists) compiler.compileInit(root)
+      System.load(path)
+    }
+
+    if (deviceNum < Config.numCpp){
+      loadNative("Config", CppCompile)
+    }
     if (deviceNum >= Config.numCpp && deviceNum < Config.numCpp + Config.numCuda) {
       loadGPU("cuda", CudaCompile)
     }

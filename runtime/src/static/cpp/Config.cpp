@@ -92,7 +92,7 @@ JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_initi
     CPU_SET(threadId, &cpu);
     sched_setaffinity(0, sizeof(cpu_set_t), &cpu);
         
-    #ifdef __DELITE_CPP_NUMA__
+    //#ifdef __DELITE_CPP_NUMA__
       if (numa_available() >= 0) {
         int socketId = config->threadToSocket(threadId);
         if (socketId < numa_num_configured_nodes()) {
@@ -102,22 +102,12 @@ JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_initi
         }
         printf("[delite]: Binding thread %d to cpu %d, socket %d\n", threadId, threadId, socketId);
       }
-    #endif
+    //#endif
   #endif
 
   #ifdef __sun
     processor_bind(P_LWPID, P_MYID, threadId, NULL);
   #endif
-}
-
-extern "C" JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_entry(JNIEnv* env, jobject obj);
-
-JNIEXPORT void JNICALL Java_ppl_delite_runtime_executor_AccExecutionThread_entry(JNIEnv* env, jobject obj) {
-  printf("[delite]: %p\n", pthread_self());
-
-  pthread_mutex_lock(&init_mtx);
-  pthread_cond_wait(&init_cond, &init_mtx);
-  pthread_mutex_unlock(&init_mtx);
 }
 
 #endif

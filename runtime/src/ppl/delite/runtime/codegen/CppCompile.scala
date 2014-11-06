@@ -12,7 +12,7 @@ object CppCompile extends CCompile {
 
   protected def configFile = "CPP.xml"
   protected def compileFlags = if (Config.cppMemMgr == "refcnt") Array("-w", "-O3", "-fPIC", "-std=c++0x", "-pthread")
-                               else Array("-w", "-O3", "-fPIC", "-pthread")
+                               else Array("-w", "-O3", "-fPIC", "-pthread", "-lnuma")
   protected def linkFlags = Array("-shared", "-fPIC", "-pthread")
   protected def outputSwitch = "-o"
   

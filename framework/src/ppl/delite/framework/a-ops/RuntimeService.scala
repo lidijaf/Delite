@@ -52,3 +52,15 @@ trait CGenRuntimeServiceOps extends CGenEffect {
     case _ => super.emitNode(sym, rhs)
   }
 }
+
+trait ScalaGenRuntimeServiceOps extends ScalaGenEffect {
+  val IR: RuntimeServiceOpsExp
+  import IR._
+
+  override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
+    case RuntimeQueryNumThreads() => stream.println("println(\"NUMA-aware don't work in scala\")")
+    case RuntimeQueryNumSockets() => stream.println("println(\"NUMA-aware don't work in scala\")")
+    case RuntimeQueryThreadsPerSocket() => stream.println("println(\"NUMA-aware don't work in scala\")")
+    case _ => super.emitNode(sym, rhs)
+  }
+}
