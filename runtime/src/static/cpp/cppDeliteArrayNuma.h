@@ -21,6 +21,10 @@ public:
         numGhostCells = _numGhostCells;
 	      avg = (T *)malloc(numGhostCells*sizeof(T));
         wrapper = (T **)malloc(config->numSockets*sizeof(T*));
+        for (int i = 0; i < config->activeSockets(); i++){
+          wrapper[i] = (T*)numa_alloc_onnode(internalLength()*sizeof(T), i);
+          memset(wrapper[i], 0, internalLength()*sizeof(T));
+        }
     }
 
     T apply(int idx) {
@@ -47,12 +51,12 @@ public:
     // }
 
     // NUMA-specific functionality
-    void allocInternal(int tid) {
-      // TODO: this ghostCell stuff is half-baked right now
-      //printf("allocating array for socket %d\n", config->threadToSocket(tid));
-      wrapper[config->threadToSocket(tid)] = (T*)malloc(internalLength()*sizeof(T));
-      memset(wrapper[config->threadToSocket(tid)], 0, internalLength()*sizeof(T));
-    }
+    // void allocInternal(int tid) {
+    //   // TODO: this ghostCell stuff is half-baked right now
+    //   //printf("allocating array for socket %d\n", config->threadToSocket(tid));
+    //   wrapper[config->threadToSocket(tid)] = (T*)malloc(internalLength()*sizeof(T));
+    //   memset(wrapper[config->threadToSocket(tid)], 0, internalLength()*sizeof(T));
+    // }
 
     T applyAt(int tid, int i) {
       return wrapper[config->threadToSocket(tid)][i];

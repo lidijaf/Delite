@@ -11,9 +11,11 @@ import ppl.delite.framework.Config
 trait RuntimeServiceOps extends Base {
   lazy val DELITE_NUM_THREADS = runtime_query_numthreads()
   lazy val DELITE_NUM_SOCKETS = runtime_query_numsockets()
+  lazy val DELITE_CORES_PER_SOCKET = runtime_query_corespersocket()
 
   def runtime_query_numthreads()(implicit ctx: SourceContext): Rep[Int]
   def runtime_query_numsockets()(implicit ctx: SourceContext): Rep[Int]
+  def runtime_query_corespersocket()(implicit ctx: SourceContext): Rep[Int]
 }
 
 trait RuntimeServiceOpsExp extends RuntimeServiceOps with EffectExp {
@@ -21,16 +23,20 @@ trait RuntimeServiceOpsExp extends RuntimeServiceOps with EffectExp {
 
   case class RuntimeQueryNumThreads() extends Def[Int]
   case class RuntimeQueryNumSockets() extends Def[Int]
+  case class RuntimeQueryCoresPerSocket() extends Def[Int]
 
   def runtime_query_numthreads()(implicit ctx: SourceContext) = reflectPure(RuntimeQueryNumThreads())
   def runtime_query_numsockets()(implicit ctx: SourceContext) = reflectPure(RuntimeQueryNumSockets())
+  def runtime_query_corespersocket()(implicit ctx: SourceContext) = reflectPure(RuntimeQueryCoresPerSocket())
 
   override def mirror[A:Manifest](e: Def[A], f: Transformer)(implicit pos: SourceContext): Exp[A] = (e match {
     case RuntimeQueryNumThreads() => runtime_query_numthreads()(pos)
     case RuntimeQueryNumSockets() => runtime_query_numsockets()(pos)
+    case RuntimeQueryCoresPerSocket() => runtime_query_corespersocket()(pos)
 
     case Reflect(RuntimeQueryNumThreads(), u, es) => reflectMirrored(Reflect(RuntimeQueryNumThreads(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case Reflect(RuntimeQueryNumSockets(), u, es) => reflectMirrored(Reflect(RuntimeQueryNumSockets(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+    case Reflect(RuntimeQueryCoresPerSocket(), u, es) => reflectMirrored(Reflect(RuntimeQueryCoresPerSocket(), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case _ => super.mirror(e,f)
   }).asInstanceOf[Exp[A]]
 }
@@ -52,6 +58,7 @@ trait CGenRuntimeServiceOps extends CGenEffect {
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
     case RuntimeQueryNumThreads() => emitValDef(sym, "config->numThreads")
     case RuntimeQueryNumSockets() => emitValDef(sym, "config->numSockets")
+    case RuntimeQueryCoresPerSocket() => emitValDef(sym, "config->numCoresPerSocket")
     case _ => super.emitNode(sym, rhs)
   }
 }
