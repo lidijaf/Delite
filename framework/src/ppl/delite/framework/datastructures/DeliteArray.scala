@@ -1900,7 +1900,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case StructType(_,_) if Config.soaEnabled => super.remap(m)
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remap(m) // occurs due to restaging
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(deviceTarget + "DeliteArrayNuma" + unwrapSharedPtr(remap(arg)))
-        case arg => deviceTarget + "DeliteArrayNuma< " + remap(arg) + addRef(arg) + " >"
+        case arg => deviceTarget + "DeliteArrayNuma" + remap(arg)
       }
     }
     else
@@ -1921,7 +1921,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case StructType(_,_) if Config.soaEnabled => super.remapHost(m)
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remapHost(m)
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(hostTarget + "DeliteArrayNuma" + unwrapSharedPtr(remapHost(arg)))
-        case arg => hostTarget + "DeliteArrayNuma< " + remap(arg) + addRef(arg) + " >"
+        case arg => hostTarget + "DeliteArrayNuma" + remap(arg)
       }
     }
     else
@@ -1933,8 +1933,14 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
     val stream = new PrintWriter(path + deviceTarget + "DeliteArrays.h")
     stream.println("#include \"" + deviceTarget + "DeliteStructs.h\"")
     stream.println("#include \"" + deviceTarget + "HashMap.h\"")
-    for((tp,name) <- dsTypesList if(isArrayType(tp))) {
-      emitDeliteArray(tp, path, stream)
+    for((tp,name) <- dsTypesList) {
+      if(isArrayType(tp)) {
+        emitDeliteArray(tp, path, stream)
+      }
+      else if (tp.erasure.getSimpleName == "DeliteArrayNuma") {
+      	emitDeliteArrayNuma(tp, path, stream)
+      }
+      
     }
     stream.close()
   }
@@ -1942,6 +1948,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
   private val generatedDeliteArray = HashSet[String]()
 
   protected val deliteArrayString: String
+  protected val deliteArrayNumaString: String
 
   private def emitDeliteArray(m: Manifest[_], path: String, header: PrintWriter) {
     try {
@@ -1971,13 +1978,41 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
     }
   }
 
+  private def emitDeliteArrayNuma(m: Manifest[_], path: String, header: PrintWriter) {
+    try {
+      val mArg = m.typeArguments(0)
+      val mString = if (cppMemMgr == "refcnt") unwrapSharedPtr(remap(m)) else remap(m)
+      val mArgString = if (cppMemMgr == "refcnt") unwrapSharedPtr(remap(mArg)) else remap(mArg)
+      val shouldGenerate = mArg match {
+        case StructType(_,_) if Config.soaEnabled => false
+        case s if s <:< manifest[Record] && Config.soaEnabled => false
+        case _ => true
+      }
+      if(!generatedDeliteArray.contains(mString) && shouldGenerate) {
+        val stream = new PrintWriter(path + mString + ".h")
+        stream.println("#ifndef __" + mString + "__")
+        stream.println("#define __" + mString + "__")
+        if(!isPrimitiveType(mArg)) stream.println("#include \"" + mArgString + ".h\"")
+        stream.println(deliteArrayNumaString.replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
+        stream.println("#endif")
+        stream.close()
+        header.println("#include \"" + mString + ".h\"")
+        generatedDeliteArray.add(mString)
+      }
+    }
+    catch {
+      case e: GenerationFailedException => //
+      case e: Exception => throw(e)
+    }
+  }
+
   override def getDataStructureHeaders(): String = {
     val out = new StringBuilder
     out.append("#include \"" + deviceTarget + "DeliteArrays.h\"\n")
     if (isAcceleratorTarget) out.append("#include \"" + hostTarget + "DeliteArrays.h\"\n")
-    if (deviceTarget == scala.virtualization.lms.internal.Targets.Cpp) {
-      out.append("#include \"cppDeliteArrayNuma.h\"\n")
-    }
+    // if (deviceTarget == scala.virtualization.lms.internal.Targets.Cpp) {
+    //   out.append("#include \"cppDeliteArrayNuma.h\"\n")
+    // }
     super.getDataStructureHeaders() + out.toString
   }
 }
@@ -2123,6 +2158,7 @@ public:
     }
 };
 """
+  protected val deliteArrayNumaString = "//Not Implemented"
 
 }
 
@@ -2143,6 +2179,7 @@ trait OpenCLGenDeliteArrayOps extends CLikeGenDeliteArrayOps with OpenCLGenFat w
   }
 
   protected val deliteArrayString = "//TODO: fill in"
+  protected val deliteArrayNumaString = "//Not Implemented"
 
 }
 
@@ -2349,5 +2386,122 @@ struct __T__D {
 #endif
 */
 };
+"""
+
+  protected val deliteArrayNumaString = """
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#include "DeliteCpp.h"
+
+class __T__ {
+public:
+    __TARG__ **wrapper;
+    __TARG__ *avg;
+    int length;
+    int numGhostCells; // constant for all internal arrays
+
+    // Constructor
+    __T__(int _length, int _numGhostCells) {
+        length = _length;
+        numGhostCells = _numGhostCells;
+	      avg = (__TARG__ *)malloc(numGhostCells*sizeof(__TARG__));
+        wrapper = (__TARG__ **)malloc(config->numSockets*sizeof(__TARG__*));
+        for (int i = 0; i < config->activeSockets(); i++){
+          wrapper[i] = (__TARG__*)numa_alloc_onnode(internalLength()*sizeof(__TARG__), i);
+          memset(wrapper[i], 0, internalLength()*sizeof(__TARG__));
+        }
+    }
+
+    __TARG__ apply(int idx) {
+      return applyAt(0, idx);
+    }
+
+    void update(int idx, __TARG__ value) {
+      updateAt(0, idx, value);
+    }
+
+    int internalLength() {
+      return std::min(length, length/config->numSockets+numGhostCells);
+    }
+
+    // Additional functions
+    // void copy(int srcOffset, cppDeliteArray<T> *dest, int destOffset, int length) {
+    //   memcpy(dest->data + destOffset, data + srcOffset, sizeof(T) * length);
+    // }
+
+    // cppDeliteArray<T> *take(int n) {
+    //   cppDeliteArray<T> *result = new cppDeliteArray<T>(n);
+    //   memcpy(result->data, data, sizeof(T) * n);
+    //   return result;
+    // }
+
+    // NUMA-specific functionality
+    // void allocInternal(int tid) {
+    //   // TODO: this ghostCell stuff is half-baked right now
+    //   //printf("allocating array for socket %d\n", config->threadToSocket(tid));
+    //   wrapper[config->threadToSocket(tid)] = (T*)malloc(internalLength()*sizeof(T));
+    //   memset(wrapper[config->threadToSocket(tid)], 0, internalLength()*sizeof(T));
+    // }
+
+    __TARG__ applyAt(int tid, int i) {
+      return wrapper[config->threadToSocket(tid)][i];
+    }
+
+    void updateAt(int tid, int i, __TARG__ value) {
+      wrapper[config->threadToSocket(tid)][i] = value;
+    }
+
+    void combineAverage() {
+      // calls to this should only be generated on type T <: Numeric, as checked inside the Delite compiler
+      memset(avg, 0, numGhostCells*sizeof(__TARG__));
+      int start = internalLength() - numGhostCells;
+      int numActiveSockets = config->activeSockets();
+      //printf("start: %d, numGhostCells: %d, internalLnehgt: %d, numActiveSockets: %d\n", start, numGhostCells, internalLength(), numActiveSockets);
+      for (int s = 0; s < numActiveSockets; s++) {
+        // currently only ghosting "to the right"
+	for (int i = start; i < numGhostCells+start; i++) {
+          avg[i-start] += wrapper[s][i];
+        }
+      }
+
+      for (int i = 0; i < numGhostCells; i++) {
+        avg[i] = avg[i] / numActiveSockets;
+      }
+
+      for (int s = 0; s < numActiveSockets; s++) {
+	for (int i = start; i < numGhostCells+start; i++) {
+	  wrapper[s][i] = avg[i-start];
+	}        
+      }
+    }
+
+    //Used to make sure every thread see the same data
+    //Only work when numGhostCells=length
+    //Whne numGhostCells=0, no nee to call this function
+    void initialSynch() {
+      memset(avg, 0, numGhostCells*sizeof(__TARG__));
+      int start = 0;
+      int numActiveSockets = config->activeSockets();
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          if (avg[i] == 0 && wrapper[s][i] != 0) {
+            avg[i] = wrapper[s][i];
+          }
+        }
+      }
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          wrapper[s][i] = avg[i];
+        }
+      }
+    }
+
+    // --
+    void release(void);
+};
+
+#endif
 """
 }
