@@ -2190,7 +2190,7 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
     // NUMA-aware
     case a@DeliteArrayNumaAlloc(len, numGhostCells) =>
-      emitValDef(sym, "new cppDeliteArrayNuma<"+remap(a.mA) + addRef(a.mA)+">("+quote(len)+","+quote(numGhostCells)+");")
+      emitValDef(sym, "new cppDeliteArrayNuma" + remap(a.mA) + "("+quote(len)+","+quote(numGhostCells)+");")
     // case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
     //   stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
     case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
@@ -2394,6 +2394,7 @@ struct __T__D {
 #include <math.h>
 
 #include "DeliteCpp.h"
+#include "DeliteMemory.h"
 
 class __T__ {
 public:
@@ -2444,6 +2445,18 @@ public:
     //   wrapper[config->threadToSocket(tid)] = (T*)malloc(internalLength()*sizeof(T));
     //   memset(wrapper[config->threadToSocket(tid)], 0, internalLength()*sizeof(T));
     // }
+
+    void print(void) {
+      printf("length is %d\n", length);
+    }
+
+    bool equals(__T__ *to) {
+      return this == to;
+    }
+
+    uint32_t hashcode(void) {
+      return (uintptr_t)this;
+    }
 
     __TARG__ applyAt(int tid, int i) {
       return wrapper[config->threadToSocket(tid)][i];
