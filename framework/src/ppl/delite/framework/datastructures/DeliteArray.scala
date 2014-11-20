@@ -1238,6 +1238,8 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   // 'ghost' refers to the number of overlapping cells to be allocated at each socket
   // TODO: investigate - does using DeliteArrayNuma break other optimizations (e.g. SoA)?
   case class DeliteArrayNumaAlloc[A:Manifest](logicalLength: Exp[Int], ghost: Exp[Int]) extends DefWithManifest[A,DeliteArrayNuma[A]]
+  case class DeliteArrayNumaApply[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int]) extends DefWithManifest[T,T]
+  case class DeliteArrayNumaUpdate[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int], x: Exp[T]) extends DefWithManifest[T,Unit]
 
   // initializes DeliteArrayNumaWrapper with concrete DeliteArrays
   // this method is locality-aware, since 1 thread pinned to each socket allocates the corresponding array for that socket
@@ -1459,6 +1461,21 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     // reflectWrite(out)(DeliteArrayNumaInit(out, length))
     out
   }
+  def darray_numa_apply[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = reflectPure(DeliteArrayNumaApply[T](da,i))
+  
+  /* 
+   * rewrites to make update operations atomic when the array is nested within another object (Variable, Struct)
+   * these allow DSL authors to create data structures such as Var(Array), access them normally, and still work with the effects system
+   * by preventing mutable aliases, i.e. preventing the compiler from ever sharing a reference to anything but the outermost object   
+   */
+  def darray_numa_update[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int], x: Exp[T])(implicit ctx: SourceContext) = da match {
+    case Def(Field(struct,name)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array)
+    case Def(Reflect(Field(struct,name),u,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array) 
+    case Def(Reflect(ReadVar(Variable(Def(Reflect(Field(struct,name),_,_)))),_,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(struct)(StructUpdate[T](s,f,List(i),x))) //Struct(Var(Array))
+    case Def(Reflect(ReadVar(v),_,_)) => reflectWrite(v.e)(VarUpdate[T](v,i,x)) //Var(Array)
+    case Def(DeliteArrayNumaApply(arr,j)) => recurseFields(arr, Nil, (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(j,i),x))) //Struct(Array(Array)) //TODO: generalize to arbitrary array nests?
+    case _ => reflectWrite(da)(DeliteArrayNumaUpdate[T](da,i,x))
+  }
 
   // def darray_numa_alloc_internal[T:Manifest](wrapper: Exp[DeliteArray[T]], threadIndex: Exp[Int])(implicit ctx: SourceContext) = {
   //   reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
@@ -1492,7 +1509,9 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case e@DeliteArrayNew(l,m,t) => darray_new_immutable(f(l))(m,pos)
       case DeliteArrayLength(a) => darray_length(f(a))
       case e@DeliteArrayApply(a,x) => darray_apply(f(a),f(x))(e.mA,pos)
+      case e@DeliteArrayNumaApply(a,x) => darray_numa_apply(f(a),f(x))(e.mA,pos)
       case e@DeliteArrayUpdate(l,i,r) => darray_unsafe_update(f(l),f(i),f(r))
+      case e@DeliteArrayNumaUpdate(l,i,r) => darray_numa_update(f(l),f(i),f(r))
       case e@DeliteArrayCopy(a,ap,d,dp,l) => toAtom(DeliteArrayCopy(f(a),f(ap),f(d),f(dp),f(l))(e.mA))(mtype(manifest[A]),pos)
       case e@DeliteArrayTake(a,x) => darray_take(f(a),f(x))(e.mA,pos)
       case e@DeliteArrayMkString(a,s) => darray_mkstring(f(a),f(s))(e.mA,pos)
@@ -1536,10 +1555,13 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@DeliteArrayForeach(in,g), u, es) => reflectMirrored(Reflect(new { override val original = Some(f,e) } with DeliteArrayForeach(f(in),f(g))(mtype(e.mA)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       
       case Reflect(e@DeliteArrayNumaAlloc(l,g), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAlloc(f(l),f(g))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaApply(l,r), u, es) => reflectMirrored(Reflect(DeliteArrayNumaApply(f(l),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaUpdate(l,i,r), u, es) => reflectMirrored(Reflect(DeliteArrayNumaUpdate(f(l),f(i),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
       // case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       // case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayNumaInitialSynch(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInitialSynch(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      
       case _ => super.mirror(e,f)
     }).asInstanceOf[Exp[A]]
   }
@@ -2193,12 +2215,12 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
       emitValDef(sym, "new cppDeliteArrayNuma" + remap(a.mA) + "("+quote(len)+","+quote(numGhostCells)+");")
     // case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
     //   stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
-    case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
+    case DeliteArrayNumaApply(da, idx) =>
       // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
-      emitValDef(sym, quote(da) + "->applyAt(" + resourceInfoSym + ".thread_id, " + quote(idx) + ");")
-    case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
+      emitValDef(sym, quote(da) + "->applyAt(" + resourceInfoSym + ".threadId, " + quote(idx) + ");")
+    case DeliteArrayNumaUpdate(da, idx, x) =>
       // this will only work if we are in the context of a multiloop!
-      stream.println(quote(da) + "->updateAt(" + resourceInfoSym + ".thread_id, " + quote(idx) + ", " + quote(x) + ");")
+      stream.println(quote(da) + "->updateAt(" + resourceInfoSym + ".threadId, " + quote(idx) + ", " + quote(x) + ");")
     case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
     case DeliteArrayNumaInitialSynch(x) => stream.println(quote(x) + "->initialSynch();")
     // --
@@ -2515,6 +2537,5 @@ public:
     void release(void);
 };
 
-#endif
 """
 }

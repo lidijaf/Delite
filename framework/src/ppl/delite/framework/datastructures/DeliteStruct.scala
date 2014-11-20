@@ -697,7 +697,7 @@ struct __T__D {
       ).distinct
         
       val dependentArrayTypes = if (cppMemMgr == "refcnt") elems.filter(e => isArrayType(baseType(e._2))).map(e => unwrapSharedPtr(remap(e._2))).distinct
-                                else elems.filter(e => isArrayType(baseType(e._2))).map(e => remap(e._2)).distinct
+                                else elems.filter(e => (isArrayType(baseType(e._2)) || baseType(e._2).erasure.getSimpleName == "DeliteArrayNuma")).map(e => remap(e._2)).distinct
       dependentStructTypes foreach { t =>
         if (encounteredStructs.contains(t)) {
           stream.println("#include \"" + deviceTarget + t + ".h\"") 

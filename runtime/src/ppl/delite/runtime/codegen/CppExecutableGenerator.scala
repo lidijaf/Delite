@@ -108,7 +108,7 @@ trait CppExecutableGenerator extends ExecutableGenerator with CppResourceInfo {
   }
 
   protected def writeFunctionCall(op: DeliteOP) {
-    def returnsResult = op.outputType(op.getOutputs.head) == op.outputType
+    def returnsResult = op.outputType(Targets.Cpp, op.getOutputs.head) == op.outputType(Targets.Cpp)
     def resultName = if (returnsResult) getSymHost(op, op.getOutputs.head) else getOpSym(op)
 
     if (op.task == null) return //dummy op
@@ -122,7 +122,7 @@ trait CppExecutableGenerator extends ExecutableGenerator with CppResourceInfo {
     if (op.outputType(Targets.Cpp) != "void") {
       out.append(op.outputType(Targets.Cpp))
       out.append(' ')
-      if (!isPrimitiveType(op.outputType) && !op.outputType(Targets.Cpp).startsWith("std::shared_ptr")) out.append('*')
+      if (!isPrimitiveCppType(op.outputType(Targets.Cpp)) && !op.outputType(Targets.Cpp).startsWith("std::shared_ptr")) out.append('*')
       out.append(resultName)
       out.append(" = ")
     }
@@ -173,6 +173,10 @@ trait CppExecutableGenerator extends ExecutableGenerator with CppResourceInfo {
   protected def isPrimitiveType(scalaType: String) = scalaType match {
     case "java.lang.String" => true
     case _ => Targets.isPrimitiveType(scalaType)
+  }
+  protected def isPrimitiveCppType(cppType: String) = cppType match {
+    // case "java.lang.String" => true
+    case _ => Targets.isPrimitiveType(Targets.Cpp, cppType)
   }
 
   private def addRef(): String = if (Config.cppMemMgr == "refcnt") " " else " *"
