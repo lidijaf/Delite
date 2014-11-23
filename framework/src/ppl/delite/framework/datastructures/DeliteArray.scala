@@ -1240,6 +1240,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   case class DeliteArrayNumaAlloc[A:Manifest](logicalLength: Exp[Int], ghost: Exp[Int]) extends DefWithManifest[A,DeliteArrayNuma[A]]
   case class DeliteArrayNumaApply[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int]) extends DefWithManifest[T,T]
   case class DeliteArrayNumaUpdate[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int], x: Exp[T]) extends DefWithManifest[T,Unit]
+  case class StructNumaUpdate[T:Manifest](struct: Exp[Any], fields: List[String], i: List[Exp[Int]], x: Exp[T]) extends DefWithManifest[T,Unit]
 
   // initializes DeliteArrayNumaWrapper with concrete DeliteArrays
   // this method is locality-aware, since 1 thread pinned to each socket allocates the corresponding array for that socket
@@ -1462,18 +1463,17 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
     out
   }
   def darray_numa_apply[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = reflectPure(DeliteArrayNumaApply[T](da,i))
-  
   /* 
    * rewrites to make update operations atomic when the array is nested within another object (Variable, Struct)
    * these allow DSL authors to create data structures such as Var(Array), access them normally, and still work with the effects system
    * by preventing mutable aliases, i.e. preventing the compiler from ever sharing a reference to anything but the outermost object   
    */
   def darray_numa_update[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int], x: Exp[T])(implicit ctx: SourceContext) = da match {
-    case Def(Field(struct,name)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array)
-    case Def(Reflect(Field(struct,name),u,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(i),x))) //Struct(Array) 
-    case Def(Reflect(ReadVar(Variable(Def(Reflect(Field(struct,name),_,_)))),_,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(struct)(StructUpdate[T](s,f,List(i),x))) //Struct(Var(Array))
+    case Def(Field(struct,name)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructNumaUpdate[T](s,f,List(i),x))) //Struct(Array)
+    case Def(Reflect(Field(struct,name),u,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(s)(StructNumaUpdate[T](s,f,List(i),x))) //Struct(Array) 
+    case Def(Reflect(ReadVar(Variable(Def(Reflect(Field(struct,name),_,_)))),_,_)) => recurseFields(struct, List(name), (s,f) => reflectWrite(struct)(StructNumaUpdate[T](s,f,List(i),x))) //Struct(Var(Array))
     case Def(Reflect(ReadVar(v),_,_)) => reflectWrite(v.e)(VarUpdate[T](v,i,x)) //Var(Array)
-    case Def(DeliteArrayNumaApply(arr,j)) => recurseFields(arr, Nil, (s,f) => reflectWrite(s)(StructUpdate[T](s,f,List(j,i),x))) //Struct(Array(Array)) //TODO: generalize to arbitrary array nests?
+    case Def(DeliteArrayNumaApply(arr,j)) => recurseFields(arr, Nil, (s,f) => reflectWrite(s)(StructNumaUpdate[T](s,f,List(j,i),x))) //Struct(Array(Array)) //TODO: generalize to arbitrary array nests?
     case _ => reflectWrite(da)(DeliteArrayNumaUpdate[T](da,i,x))
   }
 
@@ -1557,6 +1557,7 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@DeliteArrayNumaAlloc(l,g), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAlloc(f(l),f(g))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayNumaApply(l,r), u, es) => reflectMirrored(Reflect(DeliteArrayNumaApply(f(l),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayNumaUpdate(l,i,r), u, es) => reflectMirrored(Reflect(DeliteArrayNumaUpdate(f(l),f(i),f(r))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
+      case Reflect(e@StructNumaUpdate(s,n,i,x), u, es) => reflectMirrored(Reflect(StructNumaUpdate(f(s),n,f(i),f(x))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
       // case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       // case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
@@ -1898,6 +1899,13 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
       case arg if Config.generateSerializable => "ppl.delite.runtime.data.DeliteArrayObject[" + remap(arg) + "]"
       case arg => "Array[" + remap(arg) + "]"
     }
+    case "DeliteArrayNuma" => m.typeArguments(0) match {
+      case StructType(_,_) if Config.soaEnabled => super.remap(m)
+      case s if s <:< manifest[Record] && Config.soaEnabled => super.remap(m) // occurs due to restaging
+      case arg if isPrimitiveType(arg) && Config.generateSerializable => "ppl.delite.runtime.data.DeliteArray" + remap(arg)
+      case arg if Config.generateSerializable => "ppl.delite.runtime.data.DeliteArrayObject[" + remap(arg) + "]"
+      case arg => "Array[" + remap(arg) + "]"
+    }
     //case "DeliteArrayNuma" => throw new GenerationFailedException("ScalaGen: Type DeliteArrayNuma cannot be remapped.")
     case _ => super.remap(m)
   }
@@ -2221,6 +2229,9 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
     case DeliteArrayNumaUpdate(da, idx, x) =>
       // this will only work if we are in the context of a multiloop!
       stream.println(quote(da) + "->updateAt(" + resourceInfoSym + ".threadId, " + quote(idx) + ", " + quote(x) + ");")
+    case StructNumaUpdate(struct, fields, idx, x) =>
+      val nestedApply = if (idx.length > 1) idx.take(idx.length-1).map(i=>"applyAt(" + resourceInfoSym + ".threadId, " + quote(i)+")").mkString("","->","->") else ""
+      stream.println(quote(struct) + fields.mkString("->","->","->") + nestedApply + "updateAt(" + resourceInfoSym + ".threadId, " + quote(idx(idx.length-1)) + "," + quote(x) + ");")
     case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
     case DeliteArrayNumaInitialSynch(x) => stream.println(quote(x) + "->initialSynch();")
     // --

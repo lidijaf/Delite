@@ -30,10 +30,30 @@ abstract class DeliteOP {
   private[graph] val supportedTargets = new collection.mutable.HashSet[Targets.Value]
 
   def getOutputTypesMap = outputTypesMap
-  def outputType(target: Targets.Value, symbol: String): String = outputTypesMap(target)(symbol)
-  def outputType(target: Targets.Value): String = outputTypesMap(target)("functionReturn")
-  def outputType(symbol: String) = outputTypesMap(Targets.Scala)(symbol)
-  def outputType = outputTypesMap(Targets.Scala)("functionReturn")
+  def outputType(target: Targets.Value, symbol: String): String = {
+    if (outputTypesMap(target).contains(symbol))
+      outputTypesMap(target)(symbol)
+    else
+      "NoSuchType"
+  }
+  def outputType(target: Targets.Value): String = {
+    if (outputTypesMap(target).contains("functionReturn"))
+      outputTypesMap(target)("functionReturn")
+    else
+      "NoSuchType"
+  }
+  def outputType(symbol: String) : String = {
+    if (outputTypesMap(Targets.Scala).contains(symbol))
+      outputTypesMap(Targets.Scala)(symbol)
+    else
+      "NoSuchType"
+  }
+  def outputType : String = {
+    if (outputTypesMap(Targets.Scala).contains("functionReturn"))
+      outputTypesMap(Targets.Scala)("functionReturn")
+    else
+      "NoSuchType"
+  }
   def inputType(target: Targets.Value, symbol: String): String = (getInputs ++ getMutableInputs).find(_._2 == symbol).get._1.outputType(target,symbol)
   def inputType(symbol: String): String = inputType(Targets.Scala, symbol)
 

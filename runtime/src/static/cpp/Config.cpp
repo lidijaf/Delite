@@ -34,12 +34,14 @@ int getCpuInfo(FILE* pipe) {
 
 int getNumCoresPerSocket() {
   FILE* pipe = popen("grep 'cores' /proc/cpuinfo 2> /dev/null | head -1 | cut -d ':' -f 2 | tr -d ' '", "r");
-  return getCpuInfo(pipe);
+  //return getCpuInfo(pipe);
+  return 12;
 }
 
 int getNumSockets() {
   FILE* pipe = popen("grep 'physical id' /proc/cpuinfo 2> /dev/null | tail -1 | cut -d ':' -f 2 | tr -d ' '", "r");
-  return getCpuInfo(pipe) + 1;
+  //return getCpuInfo(pipe) + 1;
+  return 4;
 }
 
 void initializeConfig(int numThreads) {
