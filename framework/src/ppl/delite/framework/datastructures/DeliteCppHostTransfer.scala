@@ -24,8 +24,24 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
     isPrimitiveType(tp) && remap(tp) != "string"
   }
 
+  private def shouldGenerate(tp: Manifest[_]): Boolean = {
+    if (isPrimitiveType(tp))
+      true
+    else if (tp.erasure == classOf[Variable[Any]])
+      shouldGenerate(tp.typeArguments.head)
+    else if (encounteredStructs.contains(structName(tp)))
+      encounteredStructs(structName(tp)).map(elem => shouldGenerate(baseType(elem._2))).reduce(_ && _)
+    else if (isArrayType(tp))
+      shouldGenerate(tp.typeArguments.head)
+    else if (tp.erasure.getSimpleName == "DeliteIndex")
+      shouldGenerate(tp.typeArguments.head)
+    else
+      false
+  }
+
   override def emitSend(tp: Manifest[_], peer: Targets.Value): (String,String) = peer match {
     case Targets.JVM =>
+      if (!shouldGenerate(tp)) throw new GenerationFailedException("enitSend cannot be generated for type " + remap(tp))
       if (tp.erasure == classOf[Variable[AnyVal]]) {
         val out = new StringBuilder
         val typeArg = tp.typeArguments.head
@@ -192,6 +208,7 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
 
   override def emitRecv(tp: Manifest[_], peer: Targets.Value): (String,String) = {
     if (peer == Targets.JVM) {
+      if (!shouldGenerate(tp)) throw new GenerationFailedException("emitRecv cannot be generated for type " + remap(tp))
       if (tp.erasure == classOf[Variable[AnyVal]]) {
         val out = new StringBuilder
         val typeArg = tp.typeArguments.head
@@ -324,6 +341,7 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
   //TODO: How to implement sendView to JVM?
   override def emitSendView(tp: Manifest[_], peer: Targets.Value): (String,String) = {
     if (peer == Targets.JVM) {
+      if (!shouldGenerate(tp)) throw new GenerationFailedException("emitSendView cannot be generated for type " + remap(tp))
       if (tp.erasure == classOf[Variable[AnyVal]]) {
         val out = new StringBuilder
         val typeArg = tp.typeArguments.head
@@ -371,6 +389,7 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
 
   override def emitRecvView(tp: Manifest[_], peer: Targets.Value): (String,String) = {
     if (peer == Targets.JVM) {
+      if (!shouldGenerate(tp)) throw new GenerationFailedException("emitRecvView cannot be generated for type " + remap(tp))
       if (tp.erasure == classOf[Variable[AnyVal]]) {
         val out = new StringBuilder
         val typeArg = tp.typeArguments.head
@@ -436,6 +455,7 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
 
   override def emitSendUpdate(tp: Manifest[_], peer: Targets.Value): (String,String) = {
     if (peer == Targets.JVM) {
+      if (!shouldGenerate(tp)) throw new GenerationFailedException("emitSendUpdate cannot be generated for type " + remap(tp))
       if (tp.erasure == classOf[Variable[AnyVal]]) {
         val out = new StringBuilder
         val typeArg = tp.typeArguments.head
@@ -524,6 +544,7 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
 
   override def emitRecvUpdate(tp: Manifest[_], peer: Targets.Value): (String,String) = {
     if (peer == Targets.JVM) {
+      if (!shouldGenerate(tp)) throw new GenerationFailedException("emitRecvUpdate cannot be generated for type " + remap(tp))
       if (tp.erasure == classOf[Variable[AnyVal]]) {
         val out = new StringBuilder
         val typeArg = tp.typeArguments.head
