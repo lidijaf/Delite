@@ -1,7 +1,7 @@
 package generated.scala.io
 
 import com.google.protobuf.ByteString
-import java.io.{InputStream, IOException}
+import java.io.{InputStream, IOException, DataInput, DataOutput}
 import java.nio.charset.Charset
 
 import org.apache.hadoop.conf._
@@ -29,7 +29,6 @@ object DeliteFileInputStream {
   private def getFiles(conf: Configuration, paths:Seq[String]) = paths.toArray flatMap { p =>
     val hPath = new Path(p)
     val fs = hPath.getFileSystem(conf)
-    val status = fs.getFileStatus(hPath)
 
     if (fs.isDirectory(hPath)) {
       // return sorted list of file statuses (numbered file chunks should be parsed in order)
@@ -48,6 +47,32 @@ object DeliteFileInputStream {
     charset
   }
 
+  /* Deserialization for a DeliteFileInputStream, using Hadoop serialization for Hadoop objects */
+  def deserialize(bytes: ByteString): DeliteFileInputStream = {
+    val in = new java.io.DataInputStream(bytes.newInput)
+    val conf = new Configuration()
+    conf.readFields(in)
+    val filesLen = in.readInt()
+    val files = Array.fill(filesLen) {
+      val fs = new FileStatus()
+      fs.readFields(in)
+      fs
+    }
+    val charset = Charset.defaultCharset
+    val delimiterExists = in.readBoolean()
+    val delimiter =
+      if (delimiterExists) {
+        val delimiterLen = in.readInt()
+        Some(Array.fill(delimiterLen) { in.readByte() })
+      }
+      else None
+
+    val dfis = new DeliteFileInputStream(conf, files, charset, delimiter)
+    val pos = in.readLong()
+    dfis.openAtNewLine(pos)
+    dfis
+  }
+
 }
 
 class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], charset: Charset, delimiter: Option[Array[Byte]]) {
@@ -59,9 +84,8 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
   final def position = pos
 
   /* Initialize. This is only required / used when opening a stream directly (i.e. not via multiloop) */
-  if (size > 0) {
-    openAtNewLine(0)
-  }
+  if (size > 0) open()
+ 
   
   /* Determine the file that this logical index corresponds to, as well as the byte offset within the file. */
   private def findFileOffset(start: Long) = {
@@ -109,20 +133,25 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
     copy
   }
 
+  final def open() {
+    openAtNewLine(0)
+  }
+
   /* Read the next line */
   private def readLineInternal() {
     var length = reader.readLine(text)
     if (length == 0) {
       reader.close()        
-      if (pos+1 > size) {
+      if (pos >= size) {
         text = null
         return
       }
       else {
-        val (nextByteStream, offset) = getInputStream(pos+1)
+        val (nextByteStream, offset) = getInputStream(pos)
+        assert(offset == 0, "Incorrectly skipped to offset " + offset + " in the stream")
         reader = new LineReader(nextByteStream, delimiter.getOrElse(null))
         length = reader.readLine(text)
-        assert(length != 0, "Filesystem returned an invalid input stream for position " + (pos+1))
+        assert(length != 0, "Filesystem returned an invalid input stream for position " + pos)
       }
     }
     pos += length
@@ -153,5 +182,37 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
       reader = null
     }
     text = null
+    pos = 0
   }
+
+
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Serialization
+  /////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Serialize the DeliteFileInputStream using Hadoop serialization for Hadoop objects.
+   */
+  def serialize: ByteString = {
+    val outBytes = ByteString.newOutput
+    val out = new java.io.DataOutputStream(outBytes)
+    conf.write(out)
+    out.writeInt(files.length)
+    files.foreach(f => f.write(out))
+    if (charset != Charset.defaultCharset) throw new UnsupportedOperationException("Don't know how to serialize custom charset " + charset)
+    if (delimiter.isDefined) {
+      out.writeBoolean(true)
+      out.writeInt(delimiter.get.length)
+      delimiter.get.foreach { b => out.writeByte(b) }
+    }
+    else {
+      out.writeBoolean(false)
+    }
+    out.writeLong(pos)
+    outBytes.toByteString
+  }
+
+  /* Deserialization is static (see DeliteFileInputStream.deserialize) */
+
 }

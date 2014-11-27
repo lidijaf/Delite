@@ -34,6 +34,7 @@ trait CCompile extends CodeCache {
   private val headerBuffer = new ArrayBuffer[(String, String)]
   private val kernelBuffer = new ArrayBuffer[String] // list of kernel filenames to be included in the compilation (non-multiloop kernels)
   protected def auxSourceList = List[String]() // additional source filenames to be included in the compilation
+  protected val shared = CppCompile
 
   def headers = headerBuffer.map(_._2)
 
@@ -79,7 +80,7 @@ trait CCompile extends CodeCache {
     
     if (modules.exists(_.needsCompile)) {
       val includes = (modules.flatMap(m => List(config.headerPrefix + sourceCacheHome + m.name, config.headerPrefix + Compilers(Targets.getHostTarget(target)).sourceCacheHome + m.name)).toArray ++ 
-                     config.headerDir ++ Array(config.headerPrefix + staticResources)).distinct
+                     config.headerDir ++ Array(config.headerPrefix + staticResources, config.headerPrefix + shared.staticResources)).distinct
       val libs = config.libs ++ deliteLibs.map(Directory(_).files.withFilter(f => f.extension == OS.libExt).map(_.path)).flatten
       val sources = (sourceBuffer.map(s => sourceCacheHome + "runtime" + sep + s._2) ++ kernelBuffer.map(k => sourceCacheHome + "kernels" + sep + k) ++ auxSourceList).toArray
       val degName = ppl.delite.runtime.Delite.inputArgs(0).split('.')
@@ -121,48 +122,36 @@ trait CCompile extends CodeCache {
     if (config.headerDir.length == 0)
       throw new RuntimeException("JNI header paths are not set. Please specify in $DELITE_HOME/config/delite/" + configFile + " (<headers> </headers>)")
 
-    //TODO: How many parallel jobs? For now, the number of processors.
     val args = config.make.split(" ") ++ Array("-f", makefile, "all")
-    val process = Runtime.getRuntime.exec(args)
-    process.waitFor
-    checkError(process, args)
+    val pb = new java.lang.ProcessBuilder(args:_*)
+    pb.redirectErrorStream(true) //merge stdout and stderr
+    val outFile = File("compile.out")
+    pb.redirectOutput(outFile.jfile)
+    val process = pb.start()
+    process.waitFor()
+    checkError(process, args, outFile)
   }
 
-  protected def checkError(process: Process, args: Array[String]) {
-    val errorStream = process.getErrorStream
-    val inputStream = process.getInputStream
-    val out = new StringBuilder
-
-    var err = errorStream.read()
-    if (err != -1) {
-      out.append("--" + target + " compile args: " + args.mkString(","))
-      while (err != -1) {
-        out.append(err.asInstanceOf[Char])
-        err = errorStream.read()
-      }
-      out.append('\n')
+  protected def checkError(process: Process, args: Array[String], file: File) {
+    val out = "--" + target + " compile args: " + args.mkString(",")
+    if (Config.verbose || process.exitValue != 0) {
+      if(Config.clusterMode == 2) // Send the error message to the master node
+        ppl.delite.runtime.DeliteMesosExecutor.sendDebugMessage(out)
+      else 
+        println(out)
     }
 
-    var in = inputStream.read()
-    if (in != -1) {
-      while (in != -1) {
-        out.append(in.asInstanceOf[Char])
-        in = inputStream.read()
-      }
-      out.append('\n')
-    }
-
-    if (process.exitValue != 0) {
+    if (process.exitValue == 0) {
+      file.delete() //remove log
+    } else {
       sourceBuffer.clear()
       headerBuffer.clear()
       kernelBuffer.clear()
-      if(Config.clusterMode == 2) // Send the error message to the master node
-        ppl.delite.runtime.DeliteMesosExecutor.sendDebugMessage(out.toString)
-      else 
-        println(out.toString)
-      sys.error(target + " compilation failed with exit value " + process.exitValue)
+      sys.error(target + " compilation failed with exit value " + process.exitValue + " (log in "+file+")")
     }
   }
+
+  protected def verbosity = if (Config.verbose) "-DDELITE_VERBOSE" else ""
 
   // string for the Makefile
   def makefileString(destination: String, sources: Array[String], includes: Array[String], libs: Array[String], features:Array[String]) = s"""
@@ -186,7 +175,7 @@ $$(OUTPUT): $$(OBJECTS)
 \t$$(CC) $$(OBJECTS) $$(LDFLAGS) -o $$(OUTPUT)
 
 %.o: %.${ext}
-\t$$(CC) -c -DDELITE_CPP=${Config.numCpp} -DMEMMGR_${Config.cppMemMgr.toUpperCase} ${features.map("-D"+_).mkString(" ")} $$(INCLUDES) $$(CFLAGS) $$< -o $$@
+\t$$(CC) -c ${verbosity} -DDELITE_CPP=${Config.numCpp} -DMEMMGR_${Config.cppMemMgr.toUpperCase} ${features.map("-D"+_).mkString(" ")} $$(INCLUDES) $$(CFLAGS) $$< -o $$@
 
 clean:
 \trm -f $$(OBJECTS) $$(OUTPUT)
