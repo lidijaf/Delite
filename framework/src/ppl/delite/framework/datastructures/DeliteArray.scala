@@ -1798,13 +1798,13 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
     // // NUMA dummy, cannot work in scala
     // case a@DeliteArrayNumaAlloc(len, numGhostCells) =>
     //   stream.println("println(\"NUMA-aware don't work in scala\")")
-    // case a@DeliteArrayNumaAllocInternal(x, threadIndex) =>
-    //   stream.println("println(\"NUMA-aware don't work in scala\")")
     // case DeliteArrayApply(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx) =>
     //   // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
     //   stream.println("println(\"NUMA-aware don't work in scala\")")
     // case DeliteArrayUpdate(da@Def(Reflect(DeliteArrayNumaAlloc(len,g), u, es)), idx, x) =>
     //   // this will only work if we are in the context of a multiloop!
+    //   stream.println("println(\"NUMA-aware don't work in scala\")")
+    // case StructNumaUpdate(struct, fields, idx, x) =>
     //   stream.println("println(\"NUMA-aware don't work in scala\")")
     // case DeliteArrayNumaCombineAverage(x) => stream.println("println(\"NUMA-aware don't work in scala\")")
     // case DeliteArrayNumaInitialSynch(x) => stream.println("println(\"NUMA-aware don't work in scala\")")
@@ -1900,7 +1900,7 @@ trait ScalaGenDeliteArrayOps extends BaseGenDeliteArrayOps with ScalaGenDeliteSt
       case arg => "Array[" + remap(arg) + "]"
     }
     case "DeliteArrayNuma" => m.typeArguments(0) match {
-      case StructType(_,_) if Config.soaEnabled => super.remap(m)
+      //case StructType(_,_) if Config.soaEnabled => super.remap(m)
       case s if s <:< manifest[Record] && Config.soaEnabled => super.remap(m) // occurs due to restaging
       case arg if isPrimitiveType(arg) && Config.generateSerializable => "ppl.delite.runtime.data.DeliteArray" + remap(arg)
       case arg if Config.generateSerializable => "ppl.delite.runtime.data.DeliteArrayObject[" + remap(arg) + "]"
@@ -1927,7 +1927,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
     }
     else if (m.erasure.getSimpleName == "DeliteArrayNuma") {
       m.typeArguments.head match {
-        case StructType(_,_) if Config.soaEnabled => super.remap(m)
+        //case StructType(_,_) if Config.soaEnabled => super.remap(m)
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remap(m) // occurs due to restaging
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(deviceTarget + "DeliteArrayNuma" + unwrapSharedPtr(remap(arg)))
         case arg => deviceTarget + "DeliteArrayNuma" + remap(arg)
@@ -1948,7 +1948,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
     }
     else if (m.erasure.getSimpleName == "DeliteArrayNuma") {
       m.typeArguments.head match {
-        case StructType(_,_) if Config.soaEnabled => super.remapHost(m)
+        //case StructType(_,_) if Config.soaEnabled => super.remapHost(m)
         case s if s <:< manifest[Record] && Config.soaEnabled => super.remapHost(m)
         case arg if (cppMemMgr == "refcnt") => wrapSharedPtr(hostTarget + "DeliteArrayNuma" + unwrapSharedPtr(remapHost(arg)))
         case arg => hostTarget + "DeliteArrayNuma" + remap(arg)
@@ -2014,7 +2014,7 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
       val mString = if (cppMemMgr == "refcnt") unwrapSharedPtr(remap(m)) else remap(m)
       val mArgString = if (cppMemMgr == "refcnt") unwrapSharedPtr(remap(mArg)) else remap(mArg)
       val shouldGenerate = mArg match {
-        case StructType(_,_) if Config.soaEnabled => false
+        //case StructType(_,_) if Config.soaEnabled => false
         case s if s <:< manifest[Record] && Config.soaEnabled => false
         case _ => true
       }
@@ -2440,7 +2440,7 @@ public:
     __T__(int _length, int _numGhostCells) {
         length = _length;
         numGhostCells = _numGhostCells;
-	      avg = (__TARG__ *)malloc(numGhostCells*sizeof(__TARG__));
+        avg = (__TARG__ *)malloc(numGhostCells*sizeof(__TARG__));
         wrapper = (__TARG__ **)malloc(config->numSockets*sizeof(__TARG__*));
         for (int i = 0; i < config->activeSockets(); i++){
           wrapper[i] = (__TARG__*)numa_alloc_onnode(internalLength()*sizeof(__TARG__), i);
@@ -2500,26 +2500,26 @@ public:
     }
 
     void combineAverage() {
-      // calls to this should only be generated on type T <: Numeric, as checked inside the Delite compiler
-      memset(avg, 0, numGhostCells*sizeof(__TARG__));
       int start = internalLength() - numGhostCells;
       int numActiveSockets = config->activeSockets();
       //printf("start: %d, numGhostCells: %d, internalLnehgt: %d, numActiveSockets: %d\n", start, numGhostCells, internalLength(), numActiveSockets);
-      for (int s = 0; s < numActiveSockets; s++) {
+      for (int s = 1; s < numActiveSockets; s++) {
         // currently only ghosting "to the right"
-	for (int i = start; i < numGhostCells+start; i++) {
-          avg[i-start] += wrapper[s][i];
+        for (int i = start; i < numGhostCells+start; i++) {
+          if (avg[i-start] != wrapper[s][i])
+            // newAvg[i-start] += wrapper[s][i]; // average
+            wrapper[0][i] = wrapper[s][i]; // overwrite
         }
       }
 
       for (int i = 0; i < numGhostCells; i++) {
-        avg[i] = avg[i] / numActiveSockets;
+        avg[i] = wrapper[0][i];
       }
 
-      for (int s = 0; s < numActiveSockets; s++) {
-	for (int i = start; i < numGhostCells+start; i++) {
-	  wrapper[s][i] = avg[i-start];
-	}        
+      for (int s = 1; s < numActiveSockets; s++) {
+        for (int i = start; i < numGhostCells+start; i++) {
+          wrapper[s][i] = avg[i-start];
+        }
       }
     }
 
