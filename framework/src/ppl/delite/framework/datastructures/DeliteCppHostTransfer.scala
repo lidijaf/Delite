@@ -30,7 +30,7 @@ trait DeliteCppHostTransfer extends CppHostTransfer {
     else if (tp.erasure == classOf[Variable[Any]])
       shouldGenerate(tp.typeArguments.head)
     else if (encounteredStructs.contains(structName(tp)))
-      encounteredStructs(structName(tp)).map(elem => shouldGenerate(baseType(elem._2))).reduce(_ && _)
+      encounteredStructs(structName(tp))._2.map(elem => shouldGenerate(baseType(elem._2))).reduce(_ && _)
     else if (isArrayType(tp))
       shouldGenerate(tp.typeArguments.head)
     else if (tp.erasure.getSimpleName == "DeliteIndex")

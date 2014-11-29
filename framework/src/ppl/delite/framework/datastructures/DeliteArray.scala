@@ -2225,13 +2225,13 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
     //   stream.println(quote(x) + "->allocInternal("+quote(threadIndex)+");")
     case DeliteArrayNumaApply(da, idx) =>
       // this will only work if we are in the context of a multiloop! how can we check for this? should we have a multiloop flag similar to "deliteKernel"?
-      emitValDef(sym, quote(da) + "->applyAt(" + resourceInfoSym + ".threadId, " + quote(idx) + ");")
+      emitValDef(sym, quote(da) + "->applyAt(" + resourceInfoSym + "->threadId, " + quote(idx) + ");")
     case DeliteArrayNumaUpdate(da, idx, x) =>
       // this will only work if we are in the context of a multiloop!
-      stream.println(quote(da) + "->updateAt(" + resourceInfoSym + ".threadId, " + quote(idx) + ", " + quote(x) + ");")
+      stream.println(quote(da) + "->updateAt(" + resourceInfoSym + "->threadId, " + quote(idx) + ", " + quote(x) + ");")
     case StructNumaUpdate(struct, fields, idx, x) =>
-      val nestedApply = if (idx.length > 1) idx.take(idx.length-1).map(i=>"applyAt(" + resourceInfoSym + ".threadId, " + quote(i)+")").mkString("","->","->") else ""
-      stream.println(quote(struct) + fields.mkString("->","->","->") + nestedApply + "updateAt(" + resourceInfoSym + ".threadId, " + quote(idx(idx.length-1)) + "," + quote(x) + ");")
+      val nestedApply = if (idx.length > 1) idx.take(idx.length-1).map(i=>"applyAt(" + resourceInfoSym + "->threadId, " + quote(i)+")").mkString("","->","->") else ""
+      stream.println(quote(struct) + fields.mkString("->","->","->") + nestedApply + "updateAt(" + resourceInfoSym + "->threadId, " + quote(idx(idx.length-1)) + "," + quote(x) + ");")
     case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
     case DeliteArrayNumaInitialSynch(x) => stream.println(quote(x) + "->initialSynch();")
     // --
