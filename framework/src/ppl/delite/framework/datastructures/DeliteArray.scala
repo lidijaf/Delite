@@ -1262,7 +1262,8 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   // case class DeliteArrayNumaAllocInternal[A:Manifest](wrapper: Exp[DeliteArray[A]], threadIndex: Exp[Int]) extends DefWithManifest[A,Unit]
 
   // combine internal DeliteArrays using average, performing a NUMA sync
-  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
+  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]], i: Exp[Int]) extends DefWithManifest[A,Unit]
+  case class DeliteArrayNumaCombineReplace[A:Manifest](wrapper: Exp[DeliteArray[A]], i: Exp[Int]) extends DefWithManifest[A,Unit]
 
   case class DeliteArrayNumaInitialSynch[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
 
@@ -1481,8 +1482,12 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   //   reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
   // }
 
-  def darray_numa_combine_average[T:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
-    reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper))
+  def darray_numa_combine_average[T:Manifest](wrapper: Exp[DeliteArray[T]], i: Exp[Int])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper, i))
+  }
+
+  def darray_numa_combine_replace[T:Manifest](wrapper: Exp[DeliteArray[T]], i: Exp[Int])(implicit ctx: SourceContext) = {
+    reflectWrite(wrapper)(DeliteArrayNumaCombineReplace(wrapper, i))
   }
 
   def darray_numa_initial_synch[T:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
@@ -1560,7 +1565,8 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
       case Reflect(e@StructNumaUpdate(s,n,i,x), u, es) => reflectMirrored(Reflect(StructNumaUpdate(f(s),n,f(i),f(x))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)   
       // case Reflect(e@DeliteArrayNumaInit(w,l), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInit(f(w),f(l))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       // case Reflect(e@DeliteArrayNumaAllocInternal(w,ti), u, es) => reflectMirrored(Reflect(DeliteArrayNumaAllocInternal(f(w),f(ti))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
-      case Reflect(e@DeliteArrayNumaCombineAverage(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaCombineAverage(w, i), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineAverage(f(w), f(i))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+      case Reflect(e@DeliteArrayNumaCombineReplace(w, i), u, es) => reflectMirrored(Reflect(DeliteArrayNumaCombineReplace(f(w), f(i))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       case Reflect(e@DeliteArrayNumaInitialSynch(w), u, es) => reflectMirrored(Reflect(DeliteArrayNumaInitialSynch(f(w))(e.mA), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
       
       case _ => super.mirror(e,f)
@@ -2019,11 +2025,28 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
         case _ => true
       }
       if(!generatedDeliteArray.contains(mString) && shouldGenerate) {
+        val deliteCombineAverageString = """
+    void combineAverage(int i) {
+      int numActiveSockets = config->activeSockets();
+      memset(avg, 0, numGhostCells*sizeof(__TARG__));
+      for (int s = 0; s < numActiveSockets; s++) {
+      	avg[i] += wrapper[s][i] / numActiveSockets;
+      }
+      for (int s = 0; s < numActiveSockets; s++) {
+      	wrapper[s][i] = avg[i];
+      }
+    }
+        """
         val stream = new PrintWriter(path + mString + ".h")
         stream.println("#ifndef __" + mString + "__")
         stream.println("#define __" + mString + "__")
         if(!isPrimitiveType(mArg)) stream.println("#include \"" + mArgString + ".h\"")
-        stream.println(deliteArrayNumaString.replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
+        if (isPrimitiveType(mArg)) {
+          stream.println(deliteArrayNumaString.replaceAll("__COMBINE_AVERAGE__", deliteCombineAverageString).replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
+        }
+        else {
+          stream.println(deliteArrayNumaString.replaceAll("__COMBINE_AVERAGE__", "//Not supported").replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
+        }
         stream.println("#endif")
         stream.close()
         header.println("#include \"" + mString + ".h\"")
@@ -2232,7 +2255,8 @@ trait CGenDeliteArrayOps extends CLikeGenDeliteArrayOps with CGenDeliteStruct wi
     case StructNumaUpdate(struct, fields, idx, x) =>
       val nestedApply = if (idx.length > 1) idx.take(idx.length-1).map(i=>"applyAt(" + resourceInfoSym + "->threadId, " + quote(i)+")").mkString("","->","->") else ""
       stream.println(quote(struct) + fields.mkString("->","->","->") + nestedApply + "updateAt(" + resourceInfoSym + "->threadId, " + quote(idx(idx.length-1)) + "," + quote(x) + ");")
-    case DeliteArrayNumaCombineAverage(x) => stream.println(quote(x) + "->combineAverage();")
+    case DeliteArrayNumaCombineAverage(x, i) => stream.println(quote(x) + "->combineAverage(" + quote(i) + ");")
+    case DeliteArrayNumaCombineReplace(x, i) => stream.println(quote(x) + "->combineReplace(" + quote(i) + ");")
     case DeliteArrayNumaInitialSynch(x) => stream.println(quote(x) + "->initialSynch();")
     // --
 
@@ -2521,6 +2545,23 @@ public:
       }
     }
 
+    __COMBINE_AVERAGE__
+
+    void combineReplace(int i) {
+      int numActiveSockets = config->activeSockets();
+      for (int s = 0; s < numActiveSockets; s++) {
+        if (avg[i] != wrapper[s][i]) {
+          avg[i] = wrapper[s][i];
+          for (int r = 0; r < numActiveSockets; r++) {
+          	if (r != s) {
+          	  wrapper[r][i] = avg[i];
+          	}
+          }
+          break;
+        }
+      }
+    }
+
     //Used to make sure every thread see the same data
     //Only work when numGhostCells=length
     //Whne numGhostCells=0, no nee to call this function
@@ -2544,6 +2585,8 @@ public:
 
     // --
     void release(void);
+
+    
 };
 
 """
