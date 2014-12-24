@@ -1262,10 +1262,10 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   // case class DeliteArrayNumaAllocInternal[A:Manifest](wrapper: Exp[DeliteArray[A]], threadIndex: Exp[Int]) extends DefWithManifest[A,Unit]
 
   // combine internal DeliteArrays using average, performing a NUMA sync
-  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArray[A]], i: Exp[Int]) extends DefWithManifest[A,Unit]
-  case class DeliteArrayNumaCombineReplace[A:Manifest](wrapper: Exp[DeliteArray[A]], i: Exp[Int]) extends DefWithManifest[A,Unit]
+  case class DeliteArrayNumaCombineAverage[A:Manifest](wrapper: Exp[DeliteArrayNuma[A]], i: Exp[Int]) extends DefWithManifest[A,Unit]
+  case class DeliteArrayNumaCombineReplace[A:Manifest](wrapper: Exp[DeliteArrayNuma[A]], i: Exp[Int]) extends DefWithManifest[A,Unit]
 
-  case class DeliteArrayNumaInitialSynch[A:Manifest](wrapper: Exp[DeliteArray[A]]) extends DefWithManifest[A,Unit]
+  case class DeliteArrayNumaInitialSynch[A:Manifest](wrapper: Exp[DeliteArrayNuma[A]]) extends DefWithManifest[A,Unit]
 
 
   //////////////////
@@ -1482,15 +1482,15 @@ trait DeliteArrayOpsExp extends DeliteArrayCompilerOps with DeliteArrayStructTag
   //   reflectWrite(wrapper)(DeliteArrayNumaAllocInternal(wrapper, threadIndex))
   // }
 
-  def darray_numa_combine_average[T:Manifest](wrapper: Exp[DeliteArray[T]], i: Exp[Int])(implicit ctx: SourceContext) = {
+  def darray_numa_combine_average[T:Manifest](wrapper: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = {
     reflectWrite(wrapper)(DeliteArrayNumaCombineAverage(wrapper, i))
   }
 
-  def darray_numa_combine_replace[T:Manifest](wrapper: Exp[DeliteArray[T]], i: Exp[Int])(implicit ctx: SourceContext) = {
+  def darray_numa_combine_replace[T:Manifest](wrapper: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = {
     reflectWrite(wrapper)(DeliteArrayNumaCombineReplace(wrapper, i))
   }
 
-  def darray_numa_initial_synch[T:Manifest](wrapper: Exp[DeliteArray[T]])(implicit ctx: SourceContext) = {
+  def darray_numa_initial_synch[T:Manifest](wrapper: Exp[DeliteArrayNuma[T]])(implicit ctx: SourceContext) = {
     reflectWrite(wrapper)(DeliteArrayNumaInitialSynch(wrapper))
   }
 
@@ -1637,6 +1637,14 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
       case _ => None
     }
   }
+
+  // object NumaStructIR {
+  //   def unapply[A](e: Exp[DeliteArrayNuma[A]]): Option[(StructTag[A], Exp[Int], Seq[(String,Exp[DeliteArrayNuma[Any]])])] = e match {
+  //     case Def(Struct(SoaTag(tag: StructTag[A],len),elems:Seq[(String,Exp[DeliteArrayNuma[Any]])])) => Some((tag,len,elems))
+  //     case Def(Reflect(Struct(SoaTag(tag: StructTag[A],len), elems:Seq[(String,Exp[DeliteArrayNuma[Any]])]), u, es)) => Some((tag,len,elems))
+  //     case _ => None
+  //   }
+  // }
   
 
   //choosing the length of the first array creates an unnecessary dependency (all arrays must have same length), so we store length in the tag
@@ -1660,6 +1668,38 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
     case _ => super.darray_apply(da, i)
   }
 
+  // override def darray_numa_apply[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = da match {
+  //   case NumaStructIR(tag, len, elems) =>
+  //     struct[T](tag, elems.map(p=>(p._1, darray_numa_apply(p._2,i)(argManifest(p._2.tp),ctx))))
+  //   case StructType(tag, fields) if Config.soaEnabled =>
+  //     struct[T](tag, fields.map(p=>(p._1, darray_numa_apply(field(da,p._1)(mtype(darrayNumaManifest(p._2)),ctx),i)(mtype(p._2),ctx))))
+  //   case _ => super.darray_numa_apply(da, i)
+  // }
+
+  // override def darray_numa_combine_average[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = da match {
+  //   case NumaStructIR(tag, len, elems) =>
+  //     elems.foreach(p=>darray_numa_combine_average(p._2,i)(argManifest(p._2.tp),ctx))
+  //   case StructType(tag, fields) if Config.soaEnabled =>
+  //     fields.foreach(p=>darray_numa_combine_average(field(da,p._1)(mtype(darrayNumaManifest(p._2)),ctx), i)(mtype(p._2),ctx))
+  //   case _ => super.darray_numa_combine_average(da, i)
+  // }
+
+  // override def darray_numa_combine_replace[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int])(implicit ctx: SourceContext) = da match {
+  //   case NumaStructIR(tag, len, elems) =>
+  //     elems.foreach(p=>darray_numa_combine_replace(p._2,i)(argManifest(p._2.tp),ctx))
+  //   case StructType(tag, fields) if Config.soaEnabled =>
+  //     fields.foreach(p=>darray_numa_combine_replace(field(da,p._1)(mtype(darrayNumaManifest(p._2)),ctx), i)(mtype(p._2),ctx))
+  //   case _ => super.darray_numa_combine_replace(da, i)
+  // }
+
+  // override def darray_numa_initial_synch[T:Manifest](da: Exp[DeliteArrayNuma[T]])(implicit ctx: SourceContext) = da match {
+  // 	case NumaStructIR(tag, len, elems) =>
+  //     elems.foreach(p=>darray_numa_initial_synch(p._2)(argManifest(p._2.tp),ctx))
+  //   case StructType(tag, fields) if Config.soaEnabled =>
+  //     fields.foreach(p=>darray_numa_initial_synch(field(da,p._1)(mtype(darrayNumaManifest(p._2)),ctx))(mtype(p._2),ctx))
+  //   case _ => super.darray_numa_initial_synch(da)
+  // }
+
   //x more likely to match as a Struct than da?
   override def darray_update[T:Manifest](da: Exp[DeliteArray[T]], i: Exp[Int], x: Exp[T])(implicit ctx: SourceContext) = da match {
     case StructIR(tag, len, elems) =>
@@ -1668,6 +1708,14 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
       fields.foreach(p=>darray_update(field(da,p._1)(mtype(darrayManifest(p._2)),ctx), i, field(x,p._1)(mtype(p._2),ctx))(mtype(p._2),ctx))
     case _ => super.darray_update(da, i, x)
   }
+
+  // override def darray_numa_update[T:Manifest](da: Exp[DeliteArrayNuma[T]], i: Exp[Int], x: Exp[T])(implicit ctx: SourceContext) = da match {
+  //   case NumaStructIR(tag, len, elems) =>
+  //     elems.foreach(p=>darray_numa_update(p._2,i,field(x,p._1)(argManifest(p._2.tp),ctx))(argManifest(p._2.tp),ctx))
+  //   case StructType(tag, fields) if Config.soaEnabled =>
+  //     fields.foreach(p=>darray_numa_update(field(da,p._1)(mtype(darrayNumaManifest(p._2)),ctx), i, field(x,p._1)(mtype(p._2),ctx))(mtype(p._2),ctx))
+  //   case _ => super.darray_update(da, i, x)
+  // }
 
   override def darray_unsafe_update[T:Manifest](da: Exp[DeliteArray[T]], i: Exp[Int], x: Exp[T])(implicit ctx: SourceContext) = da match {
     case StructIR(tag, len, elems) =>
@@ -1732,6 +1780,7 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
 
   //forwarder to appease type-checker
   private def dnew[T:Manifest](length: Exp[Int])(implicit ctx: SourceContext): Exp[DeliteArray[T]] = darray_new(length)
+  // private def dnumanew[T:Manifest](length: Exp[Int], ghost: Exp[Int])(implicit ctx: SourceContext): Exp[DeliteArrayNuma[T]] = darray_numa_empty(length, ghost)
   private def dnewi[T:Manifest](length: Exp[Int])(implicit ctx: SourceContext): Exp[DeliteArray[T]] = darray_new_immutable(length)
   private def dlength[T:Manifest](da: Exp[DeliteArray[T]])(implicit ctx: SourceContext): Exp[Int] = darray_length(da)
 
@@ -1742,6 +1791,12 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
     case _ => super.darray_new(length)
   }
 
+  // override def darray_numa_empty[T:Manifest](length: Exp[Int], ghost: Exp[Int])(implicit ctx: SourceContext) = manifest[T] match {
+  //   case StructType(tag,fields) if Config.soaEnabled => 
+  //     struct[DeliteArrayNuma[T]](SoaTag(tag,length), fields.map(p=>(p._1,dnumanew(length, ghost)(p._2,ctx))))
+  //   case _ => super.darray_numa_empty(length, ghost)
+  // }
+
   override def darray_new_immutable[T:Manifest](length: Exp[Int])(implicit ctx: SourceContext) = manifest[T] match {
     case StructType(tag,fields) if Config.soaEnabled => 
       struct[DeliteArray[T]](SoaTag(tag,length), fields.map(p=>(p._1,dnewi(length)(p._2,ctx))))
@@ -1749,6 +1804,7 @@ trait DeliteArrayOpsExpOpt extends DeliteArrayOpsExp with DeliteArrayStructTags 
   }
 
   def darrayManifest(typeArg: Manifest[_]) = makeManifest(classOf[DeliteArray[_]], List(typeArg))
+  // def darrayNumaManifest(typeArg: Manifest[_]) = makeManifest(classOf[DeliteArrayNuma[_]], List(typeArg))
 
   def deliteArrayPure[T:Manifest](da: Exp[DeliteArray[T]], elems: RefinedManifest[T])(implicit ctx: SourceContext): Exp[DeliteArray[T]] = {
     if (Config.soaEnabled)
@@ -2037,16 +2093,59 @@ trait CLikeGenDeliteArrayOps extends BaseGenDeliteArrayOps with CLikeGenDeliteSt
       }
     }
         """
+        val deliteInitialSynchStructString = """
+    void initialSynch() {
+      memset(avg, 0, numGhostCells*sizeof(__TARG__));
+      int start = 0;
+      int numActiveSockets = config->activeSockets();
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          if (avg[i] == 0 && wrapper[s][i] != 0) {
+            avg[i] = wrapper[s][i];
+          }
+        }
+      }
+      for (int s = 0; s < numActiveSockets; s++) {
+      	__TARG__ localCopy = (__TARG__)numa_alloc_onnode(numGhostCells*sizeof(___TARG___), s);
+        for (int i = 0; i < numGhostCells; i++) {
+          localCopy[i] = *avg[i];
+          wrapper[s][i] = &(localCopy[i]);
+        }
+      }
+    }
+        """
+        val deliteInitialSynchPrimitiveString = """
+    void initialSynch() {
+      memset(avg, 0, numGhostCells*sizeof(__TARG__));
+      int start = 0;
+      int numActiveSockets = config->activeSockets();
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          if (avg[i] == 0 && wrapper[s][i] != 0) {
+            avg[i] = wrapper[s][i];
+          }
+        }
+      }
+      for (int s = 0; s < numActiveSockets; s++) {
+        for (int i = 0; i < numGhostCells; i++) {
+          wrapper[s][i] = avg[i];
+        }
+      }
+    }
+        """
         val stream = new PrintWriter(path + mString + ".h")
         stream.println("#ifndef __" + mString + "__")
         stream.println("#define __" + mString + "__")
         if(!isPrimitiveType(mArg)) stream.println("#include \"" + mArgString + ".h\"")
-        if (isPrimitiveType(mArg)) {
-          stream.println(deliteArrayNumaString.replaceAll("__COMBINE_AVERAGE__", deliteCombineAverageString).replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
+        val tempString = {
+          if (isPrimitiveType(mArg)) {
+            deliteArrayNumaString.replaceAll("__COMBINE_AVERAGE__", deliteCombineAverageString).replaceAll("__INITIAL_SYNCH__", deliteInitialSynchPrimitiveString)
+          }
+          else {
+            deliteArrayNumaString.replaceAll("__COMBINE_AVERAGE__", "//Not supported").replaceAll("__INITIAL_SYNCH__", deliteInitialSynchStructString).replaceAll("___TARG___", remapWithRef(mArg).replaceAll("\\*", ""))
+          }
         }
-        else {
-          stream.println(deliteArrayNumaString.replaceAll("__COMBINE_AVERAGE__", "//Not supported").replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
-        }
+        stream.println(tempString.replaceAll("__T__",mString).replaceAll("__TARG__",remapWithRef(mArg)))
         stream.println("#endif")
         stream.close()
         header.println("#include \"" + mString + ".h\"")
@@ -2565,23 +2664,11 @@ public:
     //Used to make sure every thread see the same data
     //Only work when numGhostCells=length
     //Whne numGhostCells=0, no nee to call this function
-    void initialSynch() {
-      memset(avg, 0, numGhostCells*sizeof(__TARG__));
-      int start = 0;
-      int numActiveSockets = config->activeSockets();
-      for (int s = 0; s < numActiveSockets; s++) {
-        for (int i = 0; i < numGhostCells; i++) {
-          if (avg[i] == 0 && wrapper[s][i] != 0) {
-            avg[i] = wrapper[s][i];
-          }
-        }
-      }
-      for (int s = 0; s < numActiveSockets; s++) {
-        for (int i = 0; i < numGhostCells; i++) {
-          wrapper[s][i] = avg[i];
-        }
-      }
-    }
+
+    __INITIAL_SYNCH__
+
+
+
 
     // --
     void release(void);
